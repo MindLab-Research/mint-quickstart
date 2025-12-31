@@ -27,6 +27,8 @@ Help me migrate my verl PPO training loop to MinT
 
 ## Quick Start
 
+**Requirements:** Python >= 3.11
+
 ```bash
 pip install git+https://github.com/MindLab-Research/mindlab-toolkit.git python-dotenv matplotlib numpy
 ```
@@ -43,7 +45,7 @@ Open `mint_quickstart.ipynb` and run the cells.
 MinT is fully API-compatible with [Tinker](https://tinker.thinkingmachines.ai). If you prefer, you can use the `tinker` package with MinT by configuring environment variables to point to the MinT server:
 
 ```
-TINKER_BASE_URL=https://mint-alpha.macaron.im
+TINKER_BASE_URL=https://mint.macaron.im/
 TINKER_API_KEY=<your-mint-api-key>
 ```
 
