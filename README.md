@@ -40,14 +40,20 @@ MINT_API_KEY=sk-mint-your-api-key-here
 
 Open `mint_quickstart.ipynb` and run the cells.
 
-## Tinker Compatibility
+## Using Tinker SDK
 
-MinT is fully API-compatible with [Tinker](https://tinker.thinkingmachines.ai). If you prefer, you can use the `tinker` package with MinT by configuring environment variables to point to the MinT server:
+If you have existing code using the Tinker SDK, you can use it to connect to MinT by setting these environment variables:
+
+```bash
+pip install tinker
+```
 
 ```
 TINKER_BASE_URL=https://mint.macaron.im/
 TINKER_API_KEY=<your-mint-api-key>
 ```
+
+**Note:** Use your **MinT API key** (starts with `sk-mint-`). All code in this tutorial works with `import tinker` instead of `import mint`.
 
 ## Tutorial Overview
 
