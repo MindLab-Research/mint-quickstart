@@ -1,48 +1,88 @@
 # MinT Quickstart
 
-Tutorial for training language models with [MinT](https://github.com/MindLab-Research/mindlab-toolkit) (Mind Lab Toolkit) using SFT and RL.
+The single entry repo for learning [MinT](https://github.com/MindLab-Research/mindlab-toolkit) (Mind Lab Toolkit) — from first API call to advanced RL training.
 
-## What's Included
+> **Important:** All experiments run against an already deployed MinT server. This repo does **not** start MinT backend services locally. You only need valid server endpoint + API key credentials.
 
-- `mint_quickstart.ipynb` - Complete tutorial: train a model to solve multiplication using SFT, then refine with RL
-- `mint-skill/` - Migration skill for converting code from verl/TRL/OpenRLHF to MinT
+## Demo Portfolio
 
-## Using the Migration Skill
+### Available Now
 
-The `mint-skill/` directory contains a skill that helps AI coding agents migrate your existing training code to MinT.
+| # | Demo | Track | Reward Source | Script |
+|---|------|-------|---------------|--------|
+| 1 | **RL-1 Verifiable Math** | RL | Deterministic verifier | [`demos/rl/adapters/verifiable_math.py`](demos/rl/adapters/verifiable_math.py) |
+| 2 | **RL-2 Preference Chat** | RL | Pairwise/judge preference | [`demos/rl/adapters/preference_chat.py`](demos/rl/adapters/preference_chat.py) |
+| 3 | **RL-3 Environment Tool Use** | RL | Code execution feedback | [`demos/rl/adapters/environment_tooluse.py`](demos/rl/adapters/environment_tooluse.py) |
 
-**Claude Code:**
-```bash
-cp -r mint-skill/ /path/to/your/project/.claude/skills/
-```
+### Coming Soon
 
-Then ask Claude Code to migrate your code:
-```
-Help me migrate my verl PPO training loop to MinT
-```
-
-**Other coding agents:** Copy `mint-skill/` into your agent's skills directory (consult your agent's documentation). The skill reads `SKILL.md` for instructions and `mint_api_reference.txt` for API details.
-
-**Supported frameworks:** verl, TRL, OpenRLHF, custom PyTorch training loops.
+| # | Demo | Track | Description | Status |
+|---|------|-------|-------------|--------|
+| 4 | **VLM-1 Vision QA** | VLM | Image + question -> grounded answer | Planned (M2) |
+| 5 | **VLM-2 Vision Instruction** | VLM | Image + task -> action/decision | Planned (M2) |
+| 6 | **Embodied-1 Simulator Agent** | Embodied | Simplified env -> action sequences | Planned (M3) |
 
 ## Quick Start
 
-**Requirements:** Python >= 3.11
+**Requirements:** Python >= 3.11, a MinT API key
 
 ```bash
 pip install git+https://github.com/MindLab-Research/mindlab-toolkit.git python-dotenv matplotlib numpy
 ```
 
-Create `.env`:
+Create `.env` in the repo root:
 ```
 MINT_API_KEY=sk-mint-your-api-key-here
 ```
 
-Open `mint_quickstart.ipynb` and run the cells.
+Run the quickstart (SFT then RL in one script):
+```bash
+python quickstart/quickstart.py
+```
 
-## Using Tinker SDK
+Or open the interactive notebook:
+```bash
+jupyter notebook quickstart/mint_quickstart.ipynb
+```
 
-If you have existing code using the Tinker SDK, you can use it to connect to MinT by setting these environment variables:
+## Run a Demo
+
+```bash
+python demos/rl/adapters/verifiable_math.py      # RL-1: math with exact-match reward
+python demos/rl/adapters/preference_chat.py      # RL-2: chat with helpfulness proxy
+python demos/rl/adapters/environment_tooluse.py  # RL-3: code gen with execution reward
+```
+
+All demos are configurable via environment variables. See [`demos/rl/README.md`](demos/rl/README.md) for details.
+
+## Repo Structure
+
+```
+mint-quickstart/
+  .env.example              # Template for API key configuration
+  quickstart/
+    quickstart.py           # SFT -> RL in one script
+    mint_quickstart.ipynb   # Interactive notebook version
+  demos/
+    rl/                     # 3 RL demos (available)
+      rl_core.py            # Shared GRPO training loop
+      adapters/
+        verifiable_math.py
+        preference_chat.py
+        environment_tooluse.py
+    vlm/                    # 2 VLM demos (coming soon)
+    embodied/               # 1 embodied demo (coming soon)
+  advanced/                 # Resume training, upload weights
+  docs/
+    roadmap.md              # 6-demo roadmap with status tags
+    troubleshooting.md      # Common issues and fixes
+    migration-from-minT-demo.md
+  mint-skill/               # AI coding agent migration skill
+```
+
+## Tinker SDK Compatibility
+
+If you have existing code using `import tinker`:
 
 ```bash
 pip install tinker
@@ -53,30 +93,13 @@ TINKER_BASE_URL=https://mint.macaron.im/
 TINKER_API_KEY=<your-mint-api-key>
 ```
 
-**Note:** Use your **MinT API key** (starts with `sk-mint-`). All code in this tutorial works with `import tinker` instead of `import mint`.
+All code works identically with `import tinker` instead of `import mint`.
 
-## Tutorial Overview
+## Docs
 
-| Stage | Method | Loss Function | Goal |
-|-------|--------|---------------|------|
-| 1 | SFT | `cross_entropy` | Learn multiplication from labeled examples |
-| 2 | RL | `importance_sampling` | Refine with reward signals |
-
-Key API:
-```python
-import mint
-
-service_client = mint.ServiceClient()
-training_client = service_client.create_lora_training_client(base_model="Qwen/Qwen3-0.6B", rank=16)
-
-# Train
-training_client.forward_backward(data, loss_fn="cross_entropy").result()
-training_client.optim_step(types.AdamParams(learning_rate=5e-5)).result()
-
-# Checkpoint
-checkpoint = training_client.save_state(name="my-model").result()
-
-# Inference
-sampling_client = training_client.save_weights_and_get_sampling_client(name="my-model")
-sampling_client.sample(prompt, num_samples=1, sampling_params=params).result()
-```
+- [Roadmap](docs/roadmap.md) — all 6 demos with availability status
+- [Troubleshooting](docs/troubleshooting.md) — common issues and solutions
+- [Migration Guide](docs/migration-from-minT-demo.md) — moving from old MinT-demo repo
+- [RL Demos](demos/rl/README.md) — detailed docs for the 3 available RL demos
+- [Advanced](advanced/README.md) — checkpoint upload, training resumption
+- [Migration Skill](mint-skill/SKILL.md) — AI agent skill for migrating from verl/TRL/OpenRLHF

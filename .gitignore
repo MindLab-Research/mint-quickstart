@@ -185,3 +185,19 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ML artifacts
+checkpoints/
+logs/
+outputs/
+wandb/
+runs/
+*.pt
+*.pth
+*.ckpt
+tensorboard/
+training_results.png
+
+# OS
+.DS_Store
+Thumbs.db
