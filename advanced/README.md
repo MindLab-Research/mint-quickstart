@@ -22,8 +22,14 @@ MINT_API_KEY=... python advanced/resume.py
 
 Key env vars:
 - `MINT_TOTAL_STEPS` — total training steps (default: 100)
-- `MINT_INTERRUPT_COUNT` — simulated interruptions (default: 5)
+- `MINT_CHECKPOINT_EVERY_STEPS` — save checkpoint every N steps (default: 20)
 - `MINT_RESUME_PATH` — checkpoint path to resume from
+- `MINT_BASE_MODEL` — model to train (default: `Qwen/Qwen3-0.6B`)
+- `MINT_GROUP_SIZE` — sampled candidates per prompt in each RL step (default: 4)
+- `MINT_MAX_TOKENS` — max generation tokens per sample (default: 256)
+
+If `MINT_RESUME_PATH` is invalid, `resume.py` fails fast instead of silently restarting from step 0.
+Runtime logs use explicit tags (`[run]`, `[resume]`, `[train]`, `[checkpoint]`, `[interrupt]`, `[done]`) to make checkpoint/resume state easy to audit.
 
 ## Upload Weights (`upload_weights.py`)
 

@@ -3,7 +3,7 @@
 
 Run:
   MINT_API_KEY=... MINT_RESUME_PATH=ckpt_... \
-    python demo/upload_weights/resume_from_upload_weights.py
+    python advanced/resume_from_upload.py
 
 Optional:
   MINT_BASE_URL=...            # default https://mint.macaron.im
@@ -55,9 +55,11 @@ load_env_file(demo_dir / ".env")
 
 # Allow running against a local checkout without installing `mindlab-toolkit`.
 repo_root = Path(__file__).resolve().parents[2]
-mint_src = repo_root / "mindlab-toolkit" / "src"
-if mint_src.exists() and str(mint_src) not in sys.path:
-    sys.path.insert(0, str(mint_src))
+for src_dir in ("mindlab-toolkit-alpha/src", "mindlab-toolkit/src"):
+    mint_src = repo_root / src_dir
+    if mint_src.exists() and str(mint_src) not in sys.path:
+        sys.path.insert(0, str(mint_src))
+        break
 
 import mint
 from mint import types

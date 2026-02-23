@@ -17,9 +17,15 @@ from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-MINT_SRC = REPO_ROOT / "mindlab-toolkit" / "src"
-if MINT_SRC.exists() and str(MINT_SRC) not in sys.path:
-    sys.path.insert(0, str(MINT_SRC))
+for base_dir in (REPO_ROOT.parent, REPO_ROOT):
+    for src_dir in ("mindlab-toolkit-alpha/src", "mindlab-toolkit/src"):
+        mint_src = base_dir / src_dir
+        if mint_src.exists() and str(mint_src) not in sys.path:
+            sys.path.insert(0, str(mint_src))
+            break
+    else:
+        continue
+    break
 
 
 def load_env_file(path: Path) -> None:

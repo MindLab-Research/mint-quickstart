@@ -118,7 +118,7 @@ Saved: ckpt_rl-final_...
 
 **What:** Train a model to write Python functions that pass test cases.
 
-**Reward:** `1.0` if generated code passes all test assertions, `0.0` otherwise. Code is extracted from the response and executed in a sandboxed namespace.
+**Reward:** `1.0` if generated code passes all test assertions, `0.0` otherwise. Code is extracted from the response and executed in an isolated dictionary namespace (Note: not a secure sandbox).
 
 **Run:**
 ```bash

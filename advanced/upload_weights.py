@@ -3,7 +3,7 @@
 
 Run:
   MINT_API_KEY=... MINT_UPLOAD_ARCHIVE=/path/to/ckpt.tar.gz \
-    python demo/upload_weights/upload_weights_demo.py
+    python advanced/upload_weights.py
 
 Optional:
   MINT_BASE_URL=...            # default https://mint.macaron.im

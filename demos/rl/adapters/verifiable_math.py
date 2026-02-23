@@ -22,9 +22,10 @@ class VerifiableMathAdapter(RLAdapter):
     FEWSHOT = "Q: What is 4 + 5?\nA: 9\n\n"
 
     def build_dataset(self) -> list[tuple[str, int]]:
+        pairs = [(random.randint(0, 99), random.randint(0, 99)) for _ in range(50)]
         return [
-            (f"Q: What is {random.randint(0, 99)} + {random.randint(0, 99)}?\nA:", a + b)
-            for a, b in [(random.randint(0, 99), random.randint(0, 99)) for _ in range(50)]
+            (f"Q: What is {a} + {b}?\nA:", a + b)
+            for a, b in pairs
         ]
 
     def make_prompt(self, sample: tuple[str, int], tokenizer: Any) -> list[int]:

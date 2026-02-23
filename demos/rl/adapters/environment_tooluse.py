@@ -2,6 +2,8 @@
 """RL-3 Environment Tool Use — adapter for rl_core.
 
 Reward: execution-based grading (generated code passes test cases = 1.0).
+Execution happens in an isolated dictionary namespace, not a secure sandbox.
+Never run untrusted code with this adapter.
 Run:  python demos/rl/adapters/environment_tooluse.py
 """
 
