@@ -1,5 +1,7 @@
 # MinT Quickstart
 
+[English](./README.md) | [中文](./README_zh.md)
+
 The single entry repo for learning [MinT](https://github.com/MindLab-Research/mindlab-toolkit) (Mind Lab Toolkit) — from first API call to advanced RL training.
 
 > **Important:** All experiments run against an already deployed MinT server. This repo does **not** start MinT backend services locally. You only need valid server endpoint + API key credentials.
@@ -55,6 +57,18 @@ python demos/rl/adapters/environment_tooluse.py  # RL-3: code gen with execution
 
 All demos are configurable via environment variables. See [`demos/rl/README.md`](demos/rl/README.md) for details.
 
+## Advanced Loop (Download -> Upload -> Resume)
+
+If you want a full artifact management flow:
+
+```bash
+python advanced/download_weights.py --run-id <training-run-id>
+MINT_UPLOAD_ARCHIVE=./downloads/<archive>.tar.gz python advanced/upload_weights.py
+MINT_RESUME_PATH=ckpt_<id> python advanced/resume_from_upload.py
+```
+
+See [`advanced/README.md`](advanced/README.md) for the full command matrix and guardrails (`sampler_weights` vs `weights`).
+
 ## Repo Structure
 
 ```
@@ -72,11 +86,12 @@ mint-quickstart/
         environment_tooluse.py
     vlm/                    # 2 VLM demos (coming soon)
     embodied/               # 1 embodied demo (coming soon)
-  advanced/                 # Resume training, upload weights
+  advanced/                 # Download/upload weights, resume training
   docs/
     roadmap.md              # 6-demo roadmap with status tags
     troubleshooting.md      # Common issues and fixes
     migration-from-minT-demo.md
+    experiments/            # Validation reports for quickstart flows
   mint-skill/               # AI coding agent migration skill
 ```
 
@@ -101,5 +116,7 @@ All code works identically with `import tinker` instead of `import mint`.
 - [Troubleshooting](docs/troubleshooting.md) — common issues and solutions
 - [Migration Guide](docs/migration-from-minT-demo.md) — moving from old MinT-demo repo
 - [RL Demos](demos/rl/README.md) — detailed docs for the 3 available RL demos
-- [Advanced](advanced/README.md) — checkpoint upload, training resumption
+- [Advanced](advanced/README.md) — download/upload/resume workflow and checkpoint guardrails
+- [Experiment Report](docs/experiments/quickstart-upload-download-resume-report.md) — quickstart upload-download-resume validation template/results
 - [Migration Skill](mint-skill/SKILL.md) — AI agent skill for migrating from verl/TRL/OpenRLHF
+- [中文 README](README_zh.md) — Chinese version of this document
