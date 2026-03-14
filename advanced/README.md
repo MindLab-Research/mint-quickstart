@@ -1,50 +1,93 @@
-# Advanced Demos
+# Advanced Workflows
 
-Advanced usage patterns for MinT: checkpoint upload, training resumption, and weight management.
+Remote-only MinT workflows that sit beyond the basic quickstart and demo scripts.
 
-> **Note:** All operations run against a remote MinT server. This repo does not start MinT backend services locally.
+> All operations run against a remote MinT server. This repo does not start backend services locally.
 
-## Scripts
+Use the MinT endpoint that matches your region:
 
-| Script | Description |
-|--------|-------------|
-| `resume.py` | RL training with save/resume across interruptions |
-| `upload_weights.py` | Upload a local checkpoint archive to the MinT server |
-| `resume_from_upload.py` | Resume training from a previously uploaded checkpoint |
+- Mainland China: `https://mint-cn.macaron.xin/`
+- Outside Mainland China: `https://mint.macaron.xin/`
 
-## Resume Training (`resume.py`)
+## Checkpoint lifecycle (`checkpoint.py`)
 
-Demonstrates fault-tolerant RL training that survives interruptions:
+Single script with four subcommands. All require `MINT_API_KEY` in the environment or `.env` file.
 
-```bash
-MINT_API_KEY=... python advanced/resume.py
-```
+### save
 
-Key env vars:
-- `MINT_TOTAL_STEPS` — total training steps (default: 100)
-- `MINT_CHECKPOINT_EVERY_STEPS` — save checkpoint every N steps (default: 20)
-- `MINT_RESUME_PATH` — checkpoint path to resume from
-- `MINT_BASE_MODEL` — model to train (default: `Qwen/Qwen3-0.6B`)
-- `MINT_GROUP_SIZE` — sampled candidates per prompt in each RL step (default: 4)
-- `MINT_MAX_TOKENS` — max generation tokens per sample (default: 256)
-
-If `MINT_RESUME_PATH` is invalid, `resume.py` fails fast instead of silently restarting from step 0.
-Runtime logs use explicit tags (`[run]`, `[resume]`, `[train]`, `[checkpoint]`, `[interrupt]`, `[done]`) to make checkpoint/resume state easy to audit.
-
-## Upload Weights (`upload_weights.py`)
-
-Upload a `.tar.gz` checkpoint archive to the server:
+Run 1 SFT step, save both a full state checkpoint (weights + optimizer) and a sampler-only checkpoint (weights only).
 
 ```bash
-MINT_API_KEY=... MINT_UPLOAD_ARCHIVE=/path/to/ckpt.tar.gz python advanced/upload_weights.py
+MINT_API_KEY=... python advanced/checkpoint.py save --name my-ckpt
 ```
 
-## Resume from Upload (`resume_from_upload.py`)
+Options:
+- `--model` — base model (default: `$MINT_BASE_MODEL` or `Qwen/Qwen3-0.6B`)
+- `--rank` — LoRA rank (default: `$MINT_LORA_RANK` or `16`)
+- `--lr` — learning rate (default: `$MINT_RL_LR` or `5e-5`)
 
-Load an uploaded checkpoint and continue training:
+### download
+
+Download a checkpoint archive from a `mint://` path. Retries on 409 (archive being created).
 
 ```bash
-MINT_API_KEY=... MINT_RESUME_PATH=ckpt_... python advanced/resume_from_upload.py
+MINT_API_KEY=... python advanced/checkpoint.py download mint://run-id/weights/step-100 -o ./ckpts
 ```
 
-Set `MINT_RESUME_WITH_OPTIMIZER=1` if your archive includes optimizer state.
+Options:
+- `-o` / `--output` — output directory (default: `./checkpoints`)
+- `--checkpoint-type` — `training`, `sampler`, or `auto` (default: `auto`)
+- `--no-extract` — skip tar extraction
+- `--max-wait` — max wait for 409 retry in seconds (default: 600)
+
+### upload
+
+Upload a local `.tar.gz` checkpoint archive to the server.
+
+```bash
+MINT_API_KEY=... python advanced/checkpoint.py upload ./ckpts/step-100.tar.gz
+```
+
+Options:
+- `--timeout` — upload timeout in seconds (default: 300)
+
+### resume
+
+Resume training from a previously saved or uploaded checkpoint. Two modes:
+
+```bash
+# Weights only (optimizer resets, auto-detects model/rank):
+MINT_API_KEY=... python advanced/checkpoint.py resume ckpt_abc123
+
+# With optimizer state (requires MINT_BASE_MODEL + MINT_LORA_RANK):
+MINT_API_KEY=... python advanced/checkpoint.py resume ckpt_abc123 --with-optimizer --steps 3
+```
+
+Options:
+- `--with-optimizer` — preserve optimizer momentum (requires `MINT_BASE_MODEL`, `MINT_LORA_RANK`)
+- `--steps` — SFT steps to run after resume (default: 3)
+- `--lr` — learning rate (default: `$MINT_RL_LR` or `5e-5`)
+- `--save-name` — name for checkpoint saved after training (default: `resumed-checkpoint`)
+
+## MIS rollout correction validation (`validate_mis_rollout_correction.py`)
+
+Use this script to validate that a session-level Seq-MIS `rollout_correction_config` is accepted during `create_model` and later honored by `forward_backward(..., loss_fn="importance_sampling")` without resending rollout config per step.
+
+```bash
+MINT_API_KEY=... python advanced/validate_mis_rollout_correction.py --base-model Qwen/Qwen3-0.6B
+```
+
+Supported CLI flags:
+- `--base-url`
+- `--api-key`
+- `--base-model`
+- `--lora-rank`
+- `--mis-threshold`
+- `--create-timeout-s`
+- `--forward-backward-timeout-s`
+- `--poll-interval-s`
+- `--skip-cleanup`
+
+The script prefers `MINT_*` environment variables and falls back to Tinker-compatible aliases such as `TINKER_BASE_URL`, `TINKER_API_KEY`, and `TINKER_MODEL`.
+
+See [`docs/mis_rollout_correction.md`](../docs/mis_rollout_correction.md) for usage notes, expected output, and failure modes.

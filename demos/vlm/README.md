@@ -30,6 +30,10 @@ Two vision-language model demos are planned for this track.
 - A VLM-capable base model hosted on the MinT server
 - `MINT_API_KEY` with VLM access
 
+Use the MinT endpoint that matches your region:
+- Mainland China: `https://mint-cn.macaron.xin/`
+- Outside Mainland China: `https://mint.macaron.xin/`
+
 ## Timeline
 
 Check the [roadmap](../../docs/roadmap.md) for current status.

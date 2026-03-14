@@ -2,7 +2,7 @@
 
 - Date: 2026-02-23
 - Script: `advanced/resume.py`
-- Environment: remote MinT server (`https://mint.macaron.im/` from local `.env`)
+- Environment: remote MinT server (`https://mint.macaron.xin/` from local `.env`)
 - Validation policy: quickstart-first, explicit run -> interrupt -> resume checks
 
 ## Matrix Summary

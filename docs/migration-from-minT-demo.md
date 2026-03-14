@@ -21,9 +21,9 @@ Key improvements:
 | `demo/math_rl/math_rl_demo.py` | `demos/rl/adapters/verifiable_math.py` |
 | `demo/chat_rl/chat_rl_demo.py` | `demos/rl/adapters/preference_chat.py` |
 | `demo/code_rl/code_rl_demo.py` | `demos/rl/adapters/environment_tooluse.py` |
-| `demo/rft_resume/rft_resume_demo.py` | `advanced/resume.py` |
-| `demo/upload_weights/upload_weights_demo.py` | `advanced/upload_weights.py` |
-| `demo/upload_weights/resume_from_upload_weights.py` | `advanced/resume_from_upload.py` |
+| `demo/rft_resume/rft_resume_demo.py` | `advanced/checkpoint.py save` / `resume` |
+| `demo/upload_weights/upload_weights_demo.py` | `advanced/checkpoint.py upload` |
+| `demo/upload_weights/resume_from_upload_weights.py` | `advanced/checkpoint.py resume` |
 | `mint_quickstart.ipynb` (root) | `quickstart/mint_quickstart.ipynb` |
 
 ### Run Command Changes
@@ -43,6 +43,10 @@ MINT_API_KEY=sk-mint-your-api-key-here
 
 Place `.env` in the repo root. All scripts load from there.
 
+Use the MinT endpoint that matches your region:
+- Mainland China: `https://mint-cn.macaron.xin/`
+- Outside Mainland China: `https://mint.macaron.xin/`
+
 ## Step-by-Step Migration
 
 1. **Clone the new repo** (or pull latest if you already have it):
@@ -60,7 +64,7 @@ Place `.env` in the repo root. All scripts load from there.
 
 4. **Existing checkpoints** are compatible — no retraining needed. Resume paths still work:
    ```bash
-   MINT_RESUME_PATH=ckpt_... python advanced/resume.py
+   python advanced/checkpoint.py resume ckpt_... --steps 3
    ```
 
 ## API Compatibility
@@ -69,6 +73,10 @@ The MinT Python SDK API has not changed. All existing code using `mint.ServiceCl
 
 If you use Tinker SDK (`import tinker`), it also continues to work with:
 ```
-TINKER_BASE_URL=https://mint.macaron.im/
+TINKER_BASE_URL=<your-region-endpoint>
 TINKER_API_KEY=<your-mint-api-key>
 ```
+
+Use the MinT endpoint that matches your region:
+- Mainland China: `https://mint-cn.macaron.xin/`
+- Outside Mainland China: `https://mint.macaron.xin/`

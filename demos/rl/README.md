@@ -42,6 +42,10 @@ Create `.env` in the repo root:
 MINT_API_KEY=sk-mint-your-api-key-here
 ```
 
+Use the MinT endpoint that matches your region:
+- Mainland China: `https://mint-cn.macaron.xin/`
+- Outside Mainland China: `https://mint.macaron.xin/`
+
 ---
 
 ## RL-1: Verifiable Math

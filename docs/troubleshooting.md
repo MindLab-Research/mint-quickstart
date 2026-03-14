@@ -31,9 +31,15 @@ export MINT_API_KEY=sk-mint-your-api-key-here
 
 **Fix:**
 ```bash
-curl -s https://mint.macaron.im/health
+export MINT_BASE_URL=<your-region-endpoint>
+curl -s "$MINT_BASE_URL/health"
 ```
 If that returns OK, your network is fine and the server is up.
+
+Use the MinT endpoint that matches your region:
+
+- Mainland China: `https://mint-cn.macaron.xin/`
+- Outside Mainland China: `https://mint.macaron.xin/`
 
 ### `401 Unauthorized` / `403 Forbidden`
 
@@ -109,18 +115,22 @@ pip install tinker
 ```
 
 ```
-TINKER_BASE_URL=https://mint.macaron.im/
+TINKER_BASE_URL=<your-region-endpoint>
 TINKER_API_KEY=<your-mint-api-key>
 ```
+
+Use the MinT endpoint that matches your region:
+- Mainland China: `https://mint-cn.macaron.xin/`
+- Outside Mainland China: `https://mint.macaron.xin/`
 
 All MinT API calls work identically with `import tinker` instead of `import mint`.
 
 ## Environment Variables Reference
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
+| Variable | Required | Value | Description |
+|----------|----------|-------|-------------|
 | `MINT_API_KEY` | Yes | — | API key for authentication |
-| `MINT_BASE_URL` | No | `https://mint.macaron.im/` | Server endpoint |
+| `MINT_BASE_URL` | No | Regional MinT endpoint | Server endpoint; set this to the MinT endpoint for your region |
 | `MINT_BASE_MODEL` | No | `Qwen/Qwen3-0.6B` | Base model name |
 | `MINT_LORA_RANK` | No | `16` | LoRA adapter rank |
 | `HF_ENDPOINT` | No | — | HuggingFace mirror URL |

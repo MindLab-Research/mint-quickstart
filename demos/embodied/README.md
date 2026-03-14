@@ -24,6 +24,10 @@ One embodied agent demo is planned for this track.
 - A lightweight simulator environment (TBD)
 - `MINT_API_KEY`
 
+Use the MinT endpoint that matches your region:
+- Mainland China: `https://mint-cn.macaron.xin/`
+- Outside Mainland China: `https://mint.macaron.xin/`
+
 ## Timeline
 
 This demo represents the capstone of the mint-quickstart learning path: **RL (reasoning) → VLM (perception) → Embodied (action)**.
