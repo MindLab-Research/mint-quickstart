@@ -38,7 +38,7 @@ Key improvements:
 
 Environment variables are unchanged. The same `.env` file works:
 ```
-MINT_API_KEY=sk-mint-your-api-key-here
+MINT_API_KEY=sk-your-api-key-here
 ```
 
 Place `.env` in the repo root. All scripts load from there.

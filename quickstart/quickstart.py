@@ -58,6 +58,7 @@ for base_dir in (REPO_ROOT.parent, REPO_ROOT):
     break
 
 import mint
+import tinker
 from mint import types
 
 MODEL = os.environ.get("MINT_BASE_MODEL", "Qwen/Qwen3-0.6B")
@@ -72,6 +73,64 @@ MAX_TOK = int(os.environ.get("MINT_MAX_TOKENS", "16"))
 TEMPERATURE = float(os.environ.get("MINT_TEMPERATURE", "0.7"))
 
 random.seed(42)
+
+
+def _configured_base_url() -> str:
+    base_url = os.environ.get("MINT_BASE_URL") or os.environ.get("TINKER_BASE_URL")
+    if not base_url:
+        base_url = "https://mint.macaron.xin/"
+    return base_url
+
+
+def _require_api_key() -> str:
+    api_key = (os.environ.get("MINT_API_KEY") or os.environ.get("TINKER_API_KEY") or "").strip()
+    if api_key:
+        return api_key
+    raise RuntimeError(
+        "MINT_API_KEY not found. Set `MINT_API_KEY=sk-your-api-key-here` in the shell "
+        f"or add it to `{REPO_ROOT / '.env'}` before running quickstart."
+    )
+
+
+def _status_code_from_error(exc: Exception) -> int | None:
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        return status_code
+    response = getattr(exc, "response", None)
+    response_status = getattr(response, "status_code", None)
+    return response_status if isinstance(response_status, int) else None
+
+
+def _supported_model_count(capabilities: object) -> int | None:
+    models = getattr(capabilities, "supported_models", None)
+    return len(models) if isinstance(models, list) else None
+
+
+def preflight_connection(service_client: mint.ServiceClient):
+    base_url = _configured_base_url()
+    try:
+        return service_client.get_server_capabilities()
+    except tinker.APITimeoutError as exc:
+        raise RuntimeError(
+            "Auth preflight timed out while contacting "
+            f"{base_url}. Check `MINT_BASE_URL` and retry."
+        ) from exc
+    except tinker.APIConnectionError as exc:
+        raise RuntimeError(
+            "Auth preflight could not reach "
+            f"{base_url}. Check `MINT_BASE_URL`, network access, and server status."
+        ) from exc
+    except tinker.APIStatusError as exc:
+        status_code = _status_code_from_error(exc)
+        if status_code in {401, 403}:
+            raise RuntimeError(
+                "Auth preflight was rejected by the MinT server "
+                f"(HTTP {status_code}). Check that `MINT_API_KEY` is valid for {base_url}."
+            ) from exc
+        raise RuntimeError(
+            "Auth preflight failed with an unexpected MinT server response "
+            f"(HTTP {status_code or 'unknown'}) from {base_url}."
+        ) from exc
 
 
 def extract_answer(response: str) -> str | None:
@@ -109,107 +168,128 @@ def process_sft_example(ex: dict, tokenizer) -> types.Datum:
     )
 
 
-print(f"Connecting to MinT server...")
-service_client = mint.ServiceClient()
-training_client = service_client.create_lora_training_client(
-    base_model=MODEL, rank=RANK, train_mlp=True, train_attn=True, train_unembed=True
-)
-tokenizer = training_client.get_tokenizer()
-print(f"Model: {MODEL}, Vocab: {tokenizer.vocab_size:,}\n")
+def main() -> int:
+    try:
+        _require_api_key()
+        base_url = _configured_base_url()
+        print("Connecting to MinT server...")
+        print(f"Endpoint: {base_url}")
 
-print("=" * 50)
-print("STAGE 1: Supervised Fine-Tuning (SFT)")
-print("=" * 50)
+        service_client = mint.ServiceClient()
+        capabilities = preflight_connection(service_client)
+        supported_models = _supported_model_count(capabilities)
+        if supported_models is None:
+            print("Auth preflight: OK\n")
+        else:
+            print(f"Auth preflight: OK ({supported_models} supported models)\n")
 
-sft_examples = generate_sft_examples(100)
-sft_data = [process_sft_example(ex, tokenizer) for ex in sft_examples]
-print(f"Prepared {len(sft_data)} training examples\n")
+        training_client = service_client.create_lora_training_client(
+            base_model=MODEL, rank=RANK, train_mlp=True, train_attn=True, train_unembed=True
+        )
+        tokenizer = training_client.get_tokenizer()
+        print(f"Model: {MODEL}, Vocab: {tokenizer.vocab_size:,}\n")
 
-for step in range(SFT_STEPS):
-    fb = training_client.forward_backward(sft_data, loss_fn="cross_entropy").result()
-    total_loss, total_w = 0.0, 0.0
-    for i, out in enumerate(fb.loss_fn_outputs):
-        lp = out["logprobs"]
-        if hasattr(lp, "tolist"):
-            lp = lp.tolist()
-        w = sft_data[i].loss_fn_inputs["weights"]
-        if hasattr(w, "tolist"):
-            w = w.tolist()
-        for l, wt in zip(lp, w):
-            total_loss += -l * wt
-            total_w += wt
-    loss = total_loss / max(total_w, 1)
-    training_client.optim_step(types.AdamParams(learning_rate=SFT_LR)).result()
-    print(f"  Step {step + 1:2d}/{SFT_STEPS}: loss = {loss:.4f}")
+        print("=" * 50)
+        print("STAGE 1: Supervised Fine-Tuning (SFT)")
+        print("=" * 50)
 
-ckpt = training_client.save_state(name="quickstart-sft").result()
-print(f"\nSFT checkpoint: {ckpt.path}")
+        sft_examples = generate_sft_examples(100)
+        sft_data = [process_sft_example(ex, tokenizer) for ex in sft_examples]
+        print(f"Prepared {len(sft_data)} training examples\n")
 
-print("\n" + "=" * 50)
-print("STAGE 2: Reinforcement Learning (RL)")
-print("=" * 50)
+        for step in range(SFT_STEPS):
+            fb = training_client.forward_backward(sft_data, loss_fn="cross_entropy").result()
+            total_loss, total_w = 0.0, 0.0
+            for i, out in enumerate(fb.loss_fn_outputs):
+                lp = out["logprobs"]
+                if hasattr(lp, "tolist"):
+                    lp = lp.tolist()
+                w = sft_data[i].loss_fn_inputs["weights"]
+                if hasattr(w, "tolist"):
+                    w = w.tolist()
+                for l, wt in zip(lp, w):
+                    total_loss += -l * wt
+                    total_w += wt
+            loss = total_loss / max(total_w, 1)
+            training_client.optim_step(types.AdamParams(learning_rate=SFT_LR)).result()
+            print(f"  Step {step + 1:2d}/{SFT_STEPS}: loss = {loss:.4f}")
 
-for step in range(RL_STEPS):
-    sampling_client = training_client.save_weights_and_get_sampling_client(
-        name=f"qs-rl-{step}"
-    )
-    all_rewards: list[float] = []
-    datums: list[types.Datum] = []
+        ckpt = training_client.save_state(name="quickstart-sft").result()
+        print(f"\nSFT checkpoint: {ckpt.path}")
 
-    for _ in range(RL_BATCH):
-        a, b = random.randint(10, 199), random.randint(10, 199)
-        answer = str(a * b)
-        prompt = f"Question: What is {a} * {b}?\nAnswer:"
-        prompt_tokens = tokenizer.encode(prompt)
+        print("\n" + "=" * 50)
+        print("STAGE 2: Reinforcement Learning (RL)")
+        print("=" * 50)
 
-        res = sampling_client.sample(
-            prompt=types.ModelInput.from_ints(tokens=prompt_tokens),
-            num_samples=RL_GROUP,
-            sampling_params=types.SamplingParams(
-                max_tokens=MAX_TOK,
-                temperature=TEMPERATURE,
-                stop_token_ids=[tokenizer.eos_token_id],
-            ),
-        ).result()
-
-        g_rewards, g_responses, g_logprobs = [], [], []
-        for seq in res.sequences:
-            txt = tokenizer.decode(seq.tokens)
-            reward = 1.0 if extract_answer(txt) == answer else 0.0
-            g_rewards.append(reward)
-            g_responses.append(list(seq.tokens))
-            g_logprobs.append(list(seq.logprobs or [0.0] * len(seq.tokens)))
-
-        all_rewards.extend(g_rewards)
-        mean_r = sum(g_rewards) / len(g_rewards)
-        advs = [r - mean_r for r in g_rewards]
-        if all(a == 0 for a in advs):
-            continue
-
-        for resp_tok, lp, adv in zip(g_responses, g_logprobs, advs):
-            if not resp_tok:
-                continue
-            full = prompt_tokens + resp_tok
-            prefix = len(prompt_tokens) - 1
-            datums.append(
-                types.Datum(
-                    model_input=types.ModelInput.from_ints(tokens=full[:-1]),
-                    loss_fn_inputs={
-                        "target_tokens": full[1:],
-                        "weights": [0.0] * prefix + [1.0] * len(resp_tok),
-                        "logprobs": [0.0] * prefix + lp,
-                        "advantages": [0.0] * prefix + [adv] * len(resp_tok),
-                    },
-                )
+        for step in range(RL_STEPS):
+            sampling_client = training_client.save_weights_and_get_sampling_client(
+                name=f"qs-rl-{step}"
             )
+            all_rewards: list[float] = []
+            datums: list[types.Datum] = []
 
-    if datums:
-        training_client.forward_backward(datums, loss_fn="importance_sampling").result()
-        training_client.optim_step(types.AdamParams(learning_rate=RL_LR)).result()
+            for _ in range(RL_BATCH):
+                a, b = random.randint(10, 199), random.randint(10, 199)
+                answer = str(a * b)
+                prompt = f"Question: What is {a} * {b}?\nAnswer:"
+                prompt_tokens = tokenizer.encode(prompt)
 
-    acc = sum(1 for r in all_rewards if r > 0) / len(all_rewards) if all_rewards else 0
-    print(f"  Step {step + 1:2d}/{RL_STEPS}: accuracy = {acc:5.1%}")
+                res = sampling_client.sample(
+                    prompt=types.ModelInput.from_ints(tokens=prompt_tokens),
+                    num_samples=RL_GROUP,
+                    sampling_params=types.SamplingParams(
+                        max_tokens=MAX_TOK,
+                        temperature=TEMPERATURE,
+                        stop_token_ids=[tokenizer.eos_token_id],
+                    ),
+                ).result()
 
-ckpt = training_client.save_state(name="quickstart-rl-final").result()
-print(f"\nRL checkpoint: {ckpt.path}")
-print("\nDone! See demos/ for more advanced examples.")
+                g_rewards, g_responses, g_logprobs = [], [], []
+                for seq in res.sequences:
+                    txt = tokenizer.decode(seq.tokens)
+                    reward = 1.0 if extract_answer(txt) == answer else 0.0
+                    g_rewards.append(reward)
+                    g_responses.append(list(seq.tokens))
+                    g_logprobs.append(list(seq.logprobs or [0.0] * len(seq.tokens)))
+
+                all_rewards.extend(g_rewards)
+                mean_r = sum(g_rewards) / len(g_rewards)
+                advs = [r - mean_r for r in g_rewards]
+                if all(a == 0 for a in advs):
+                    continue
+
+                for resp_tok, lp, adv in zip(g_responses, g_logprobs, advs):
+                    if not resp_tok:
+                        continue
+                    full = prompt_tokens + resp_tok
+                    prefix = len(prompt_tokens) - 1
+                    datums.append(
+                        types.Datum(
+                            model_input=types.ModelInput.from_ints(tokens=full[:-1]),
+                            loss_fn_inputs={
+                                "target_tokens": full[1:],
+                                "weights": [0.0] * prefix + [1.0] * len(resp_tok),
+                                "logprobs": [0.0] * prefix + lp,
+                                "advantages": [0.0] * prefix + [adv] * len(resp_tok),
+                            },
+                        )
+                    )
+
+            if datums:
+                training_client.forward_backward(datums, loss_fn="importance_sampling").result()
+                training_client.optim_step(types.AdamParams(learning_rate=RL_LR)).result()
+
+            acc = sum(1 for r in all_rewards if r > 0) / len(all_rewards) if all_rewards else 0
+            print(f"  Step {step + 1:2d}/{RL_STEPS}: accuracy = {acc:5.1%}")
+
+        ckpt = training_client.save_state(name="quickstart-rl-final").result()
+        print(f"\nRL checkpoint: {ckpt.path}")
+        print("\nDone! See demos/ for more advanced examples.")
+        return 0
+    except RuntimeError as exc:
+        print(f"Setup error: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -7,7 +7,7 @@ Get from zero to a trained model in under 30 minutes.
 ## Prerequisites
 
 - Python >= 3.11
-- A MinT API key (starts with `sk-mint-`)
+- A MinT API key (starts with `sk-`)
 
 ## Setup
 
@@ -17,7 +17,7 @@ pip install git+https://github.com/MindLab-Research/mindlab-toolkit.git python-d
 
 Create a `.env` file in the repo root:
 ```
-MINT_API_KEY=sk-mint-your-api-key-here
+MINT_API_KEY=sk-your-api-key-here
 ```
 
 Use the MinT endpoint that matches your region:
@@ -70,6 +70,9 @@ sampling_client.sample(prompt, num_samples=1, sampling_params=params).result()
 
 ```
 Connecting to MinT server...
+Endpoint: https://mint.macaron.xin/
+Auth preflight: OK (N supported models)
+
 Model: Qwen/Qwen3-0.6B, Vocab: 151,936
 
 ==================================================

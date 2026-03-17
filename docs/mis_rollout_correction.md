@@ -53,7 +53,7 @@ MinT-style names win over Tinker-compatible aliases when both are set.
 Use MinT-style variables:
 
 ```bash
-export MINT_API_KEY=sk-mint-your-api-key-here
+export MINT_API_KEY=sk-your-api-key-here
 export MINT_BASE_URL=<your-region-endpoint>
 python advanced/validate_mis_rollout_correction.py --base-model Qwen/Qwen3-0.6B
 ```
@@ -61,7 +61,7 @@ python advanced/validate_mis_rollout_correction.py --base-model Qwen/Qwen3-0.6B
 Use Tinker-compatible aliases:
 
 ```bash
-export TINKER_API_KEY=sk-mint-your-api-key-here
+export TINKER_API_KEY=sk-your-api-key-here
 export TINKER_BASE_URL=<your-region-endpoint>
 export TINKER_MODEL=Qwen/Qwen3-0.6B
 python advanced/validate_mis_rollout_correction.py

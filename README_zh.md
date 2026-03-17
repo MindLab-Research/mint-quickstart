@@ -34,7 +34,7 @@ pip install git+https://github.com/MindLab-Research/mindlab-toolkit.git python-d
 
 在仓库根目录创建 `.env` 文件：
 ```
-MINT_API_KEY=sk-mint-your-api-key-here
+MINT_API_KEY=sk-your-api-key-here
 ```
 
 按所在区域选择 MinT 域名：

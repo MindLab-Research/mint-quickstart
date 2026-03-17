@@ -34,7 +34,7 @@ pip install git+https://github.com/MindLab-Research/mindlab-toolkit.git python-d
 
 Create `.env` in the repo root:
 ```
-MINT_API_KEY=sk-mint-your-api-key-here
+MINT_API_KEY=sk-your-api-key-here
 ```
 
 Use the MinT endpoint that matches your region:

@@ -12,12 +12,12 @@ Common issues and solutions when running mint-quickstart demos.
 
 **Fix:** Create a `.env` file in the repo root:
 ```
-MINT_API_KEY=sk-mint-your-api-key-here
+MINT_API_KEY=sk-your-api-key-here
 ```
 
 Or export directly:
 ```bash
-export MINT_API_KEY=sk-mint-your-api-key-here
+export MINT_API_KEY=sk-your-api-key-here
 ```
 
 ### `ConnectionError` / `Connection refused`
@@ -32,9 +32,9 @@ export MINT_API_KEY=sk-mint-your-api-key-here
 **Fix:**
 ```bash
 export MINT_BASE_URL=<your-region-endpoint>
-curl -s "$MINT_BASE_URL/health"
+curl -s "$MINT_BASE_URL/api/v1/healthz"
 ```
-If that returns OK, your network is fine and the server is up.
+If that returns HTTP 200 with a JSON health payload, your network is fine and the server is up.
 
 Use the MinT endpoint that matches your region:
 
@@ -46,7 +46,7 @@ Use the MinT endpoint that matches your region:
 **Symptom:** Server rejects your API key.
 
 **Fix:**
-- Verify your key starts with `sk-mint-`
+- Verify your key starts with `sk-`
 - Check the key hasn't expired
 - Contact the MinT team for a new key
 
