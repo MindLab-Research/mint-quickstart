@@ -3,7 +3,7 @@
 Validate session-level Seq-MIS rollout correction on a remote MinT server with one script:
 
 ```bash
-python advanced/validate_mis_rollout_correction.py --base-model Qwen/Qwen3-0.6B
+python advanced/validate_mis_rollout_correction.py --base-model Qwen/Qwen3-30B-A3B-Instruct-2507
 ```
 
 > This is a targeted validation flow, not a full RL tutorial. It checks that session-level `rollout_correction_config` survives `create_model` and is honored later by `forward_backward(..., loss_fn="importance_sampling")` without resending per-step rollout config.
@@ -29,6 +29,7 @@ python advanced/validate_mis_rollout_correction.py --base-model Qwen/Qwen3-0.6B
 - `requests` installed
 - a working MinT API key in `MINT_API_KEY` or `TINKER_API_KEY`
 - optional `.env` file in the repo root
+- a supported MoE / Megatron model; the current server rejects dense models for this validation
 
 Use the MinT endpoint that matches your region:
 
@@ -55,7 +56,7 @@ Use MinT-style variables:
 ```bash
 export MINT_API_KEY=sk-your-api-key-here
 export MINT_BASE_URL=<your-region-endpoint>
-python advanced/validate_mis_rollout_correction.py --base-model Qwen/Qwen3-0.6B
+python advanced/validate_mis_rollout_correction.py --base-model Qwen/Qwen3-30B-A3B-Instruct-2507
 ```
 
 Use Tinker-compatible aliases:
@@ -63,7 +64,7 @@ Use Tinker-compatible aliases:
 ```bash
 export TINKER_API_KEY=sk-your-api-key-here
 export TINKER_BASE_URL=<your-region-endpoint>
-export TINKER_MODEL=Qwen/Qwen3-0.6B
+export TINKER_MODEL=Qwen/Qwen3-30B-A3B-Instruct-2507
 python advanced/validate_mis_rollout_correction.py
 ```
 
@@ -76,7 +77,7 @@ python advanced/validate_mis_rollout_correction.py --skip-cleanup
 ## Expected output
 
 ```text
-[config] base_url=<your-region-endpoint> base_model=Qwen/Qwen3-0.6B lora_rank=8 mis_threshold=1.1
+[config] base_url=<your-region-endpoint> base_model=Qwen/Qwen3-30B-A3B-Instruct-2507 lora_rank=8 mis_threshold=1.1
 [create_model] submitted session_id=validate-mis-1234abcd
 [create_model] resolved model_id=model_...
 [forward_backward] submitted model_id=model_... loss_fn=importance_sampling

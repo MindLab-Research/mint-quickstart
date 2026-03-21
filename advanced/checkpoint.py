@@ -4,8 +4,10 @@
 Usage:
     python advanced/checkpoint.py save     --name my-ckpt
     python advanced/checkpoint.py download mint://run-id/weights/step-100 -o ./ckpts
+    python advanced/checkpoint.py download tinker://run-id/weights/step-100 -o ./ckpts
     python advanced/checkpoint.py upload   ./ckpts/step-100.tar.gz
-    python advanced/checkpoint.py resume   mint://run-id/weights/step-100 --with-optimizer --steps 3
+    python advanced/checkpoint.py resume   tinker://run-id/weights/step-100 --steps 3
+    python advanced/checkpoint.py resume   tinker://run-id/weights/step-100 --with-optimizer --steps 3
 
 All commands require MINT_API_KEY in the environment or a .env file one level up.
 """
@@ -16,6 +18,7 @@ import argparse
 import http.client
 import json
 import os
+import ssl
 import sys
 import tarfile
 import urllib.error
@@ -86,6 +89,43 @@ def _service_client() -> mint.ServiceClient:
     if base_url:
         return mint.ServiceClient(base_url=base_url)
     return mint.ServiceClient()
+
+
+def _status_code_from_error(exc: Exception) -> int | None:
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        return status_code
+    response = getattr(exc, "response", None)
+    response_status = getattr(response, "status_code", None)
+    return response_status if isinstance(response_status, int) else None
+
+
+def _looks_like_remote_checkpoint_path(path: str) -> bool:
+    return path.startswith("mint://") or path.startswith("tinker://") or path.startswith("ckpt_")
+
+
+def _resume_with_explicit_model(
+    sc: mint.ServiceClient,
+    *,
+    path: str,
+    with_optimizer: bool,
+) -> mint.TrainingClient:
+    model = os.environ.get("MINT_BASE_MODEL", "Qwen/Qwen3-0.6B")
+    rank = int(os.environ.get("MINT_LORA_RANK", "16"))
+    print(f"[resume] fallback to explicit training client: model={model} rank={rank}")
+    tc = sc.create_lora_training_client(
+        base_model=model,
+        rank=rank,
+        train_mlp=True,
+        train_attn=True,
+        train_unembed=True,
+    )
+    print(f"[resume] loading state from {path}...")
+    if with_optimizer:
+        tc.load_state_with_optimizer(path).result()
+    else:
+        tc.load_state(path).result()
+    return tc
 
 
 # ---------------------------------------------------------------------------
@@ -203,21 +243,31 @@ def _upload_checkpoint_archive(
 # Download helpers
 # ---------------------------------------------------------------------------
 
-def _parse_mint_path(mint_path: str) -> tuple[str, str | None, str]:
-    """Parse mint://run/[weights|sampler_weights]/name.
+def _parse_checkpoint_path(checkpoint_path: str) -> tuple[str, str, str | None, str]:
+    """Parse mint:// or tinker:// run/[weights|sampler_weights]/name.
 
-    Returns: (run_id, path_type_or_None, checkpoint_name).
+    Returns: (scheme, run_id, path_type_or_None, checkpoint_name).
     """
-    prefix = "mint://"
-    if not mint_path.startswith(prefix):
-        raise ValueError(f"Invalid mint path '{mint_path}'. Expected prefix 'mint://'.")
+    scheme = ""
+    prefix = ""
+    for candidate in ("mint://", "tinker://"):
+        if checkpoint_path.startswith(candidate):
+            scheme = candidate[:-3]
+            prefix = candidate
+            break
+    if not prefix:
+        raise ValueError(
+            f"Invalid checkpoint path '{checkpoint_path}'. "
+            "Expected prefix 'mint://' or 'tinker://'."
+        )
 
-    remainder = mint_path[len(prefix):].strip("/")
+    remainder = checkpoint_path[len(prefix):].strip("/")
     parts = [p for p in remainder.split("/") if p]
     if len(parts) < 2:
         raise ValueError(
-            f"Invalid mint path '{mint_path}'. "
-            "Expected mint://<run>/<name> or mint://<run>/(weights|sampler_weights)/<name>."
+            f"Invalid checkpoint path '{checkpoint_path}'. "
+            "Expected <scheme>://<run>/<name> or "
+            "<scheme>://<run>/(weights|sampler_weights)/<name>."
         )
 
     run_id = parts[0]
@@ -225,21 +275,22 @@ def _parse_mint_path(mint_path: str) -> tuple[str, str | None, str]:
     if tail[0] in {"weights", "sampler_weights"}:
         if len(tail) < 2:
             raise ValueError(
-                f"Invalid mint path '{mint_path}'. Missing checkpoint name after '{tail[0]}'."
+                f"Invalid checkpoint path '{checkpoint_path}'. "
+                f"Missing checkpoint name after '{tail[0]}'."
             )
         checkpoint_name = "/".join(tail[1:])
-        return run_id, tail[0], checkpoint_name
+        return scheme, run_id, tail[0], checkpoint_name
 
     checkpoint_name = "/".join(tail)
-    return run_id, None, checkpoint_name
+    return scheme, run_id, None, checkpoint_name
 
 
-def _normalize_mint_path(mint_path: str, checkpoint_type: str = "auto") -> list[str]:
+def _normalize_mint_path(checkpoint_path: str, checkpoint_type: str = "auto") -> list[str]:
     """Normalize into canonical mint://<run>/(weights|sampler_weights)/<name> form.
 
     Returns: list of candidate paths (1 or 2 depending on checkpoint_type).
     """
-    run_id, path_type, checkpoint_name = _parse_mint_path(mint_path)
+    _, run_id, path_type, checkpoint_name = _parse_checkpoint_path(checkpoint_path)
 
     if path_type in {"weights", "sampler_weights"}:
         return [f"mint://{run_id}/{path_type}/{checkpoint_name}"]
@@ -260,7 +311,7 @@ def _normalize_mint_path(mint_path: str, checkpoint_type: str = "auto") -> list[
 
 def _mint_path_to_tinker_path(mint_path: str) -> str:
     """Convert canonical mint:// path to tinker:// path for older SDK."""
-    run_id, path_type, checkpoint_name = _parse_mint_path(mint_path)
+    _, run_id, path_type, checkpoint_name = _parse_checkpoint_path(mint_path)
     if path_type not in {"weights", "sampler_weights"}:
         raise ValueError("Mint path must be canonical for tinker conversion.")
     return f"tinker://{run_id}/{path_type}/{checkpoint_name}"
@@ -317,7 +368,19 @@ def _download_with_progress(*, url: str, dest_path: Path, chunk_size: int = 1024
     downloaded = 0
     total = None
 
-    with urllib.request.urlopen(req) as resp, open(dest_path, "wb") as out:
+    try:
+        response = urllib.request.urlopen(req)
+    except urllib.error.URLError as exc:
+        fallback_url = _maybe_retry_over_http(url, exc)
+        if fallback_url is None:
+            raise
+        print("   signed URL rejected TLS; retrying over http for archive download...")
+        req = urllib.request.Request(
+            fallback_url, headers={"User-Agent": "mint-checkpoint/1.0"}
+        )
+        response = urllib.request.urlopen(req)
+
+    with response as resp, open(dest_path, "wb") as out:
         try:
             total_hdr = resp.headers.get("Content-Length")
             if total_hdr:
@@ -361,6 +424,18 @@ def _download_with_progress(*, url: str, dest_path: Path, chunk_size: int = 1024
         print(f"   {mb_done:,.1f} / {mb_total:,.1f} MiB (100.0%) @ {speed:,.1f} MiB/s")
     else:
         print(f"   {mb_done:,.1f} MiB @ {speed:,.1f} MiB/s")
+
+
+def _maybe_retry_over_http(url: str, exc: urllib.error.URLError) -> str | None:
+    reason = getattr(exc, "reason", None)
+    if not isinstance(reason, ssl.SSLError):
+        return None
+    if "WRONG_VERSION_NUMBER" not in str(reason):
+        return None
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        return None
+    return parsed._replace(scheme="http").geturl()
 
 
 def _extract_archive(archive_path: Path, out_dir: Path) -> Path:
@@ -449,7 +524,7 @@ def cmd_download(args: argparse.Namespace) -> None:
 
     for i, candidate in enumerate(candidates):
         is_last = i == len(candidates) - 1
-        _, _, ckpt_name = _parse_mint_path(candidate)
+        _, _, _, ckpt_name = _parse_checkpoint_path(candidate)
         archive_filename = f"{Path(ckpt_name).name}.tar.gz"
         archive_path = out_dir / archive_filename
 
@@ -526,19 +601,36 @@ def cmd_resume(args: argparse.Namespace) -> None:
     sc = _service_client()
 
     if with_optimizer:
-        # Need explicit model/rank to create training client first
-        model = os.environ.get("MINT_BASE_MODEL", "Qwen/Qwen3-0.6B")
-        rank = int(os.environ.get("MINT_LORA_RANK", "16"))
-        print(f"[resume] creating training client: model={model} rank={rank}")
-        tc = sc.create_lora_training_client(
-            base_model=model, rank=rank,
-            train_mlp=True, train_attn=True, train_unembed=True,
-        )
-        print(f"[resume] loading state with optimizer from {resume_path}...")
-        tc.load_state_with_optimizer(resume_path).result()
+        try:
+            tc = _resume_with_explicit_model(
+                sc, path=resume_path, with_optimizer=True
+            )
+        except Exception as exc:
+            if not _looks_like_remote_checkpoint_path(resume_path):
+                raise
+            status_code = _status_code_from_error(exc)
+            if status_code not in {None, 404}:
+                raise
+            print(
+                "[resume] explicit load_state_with_optimizer failed "
+                f"with HTTP {status_code or 'unknown'}"
+            )
+            raise
     else:
-        print(f"[resume] creating training client from state (optimizer resets)...")
-        tc = sc.create_training_client_from_state(resume_path)
+        print("[resume] creating training client from state (optimizer resets)...")
+        try:
+            tc = sc.create_training_client_from_state(resume_path)
+        except Exception as exc:
+            status_code = _status_code_from_error(exc)
+            if status_code != 404 or not _looks_like_remote_checkpoint_path(resume_path):
+                raise
+            print(
+                "[resume] auto-detect state metadata lookup returned 404; "
+                "retrying with explicit model/rank from env/defaults"
+            )
+            tc = _resume_with_explicit_model(
+                sc, path=resume_path, with_optimizer=False
+            )
 
     print(f"[resume] loaded, running {steps} SFT step(s)...")
 
@@ -575,8 +667,11 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Learning rate (default: $MINT_RL_LR or 5e-5)")
 
     # -- download --
-    p_dl = sub.add_parser("download", help="Download checkpoint from mint:// path")
-    p_dl.add_argument("mint_path", help="mint://<run>/(weights|sampler_weights)/<name>")
+    p_dl = sub.add_parser("download", help="Download checkpoint from mint:// or tinker:// path")
+    p_dl.add_argument(
+        "mint_path",
+        help="mint://<run>/(weights|sampler_weights)/<name> or tinker://<run>/...",
+    )
     p_dl.add_argument("-o", "--output", default="./checkpoints",
                        help="Output directory (default: ./checkpoints)")
     p_dl.add_argument("--checkpoint-type", choices=["sampler", "training", "auto"], default="auto",
@@ -596,7 +691,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     # -- resume --
     p_re = sub.add_parser("resume", help="Resume training from checkpoint")
-    p_re.add_argument("path", help="Checkpoint path (server-side, e.g. ckpt_... or mint://...)")
+    p_re.add_argument(
+        "path",
+        help="Checkpoint path (server-side, e.g. ckpt_..., mint://..., or tinker://...)",
+    )
     p_re.add_argument("--with-optimizer", action="store_true", default=False,
                        help="Preserve optimizer state (requires MINT_BASE_MODEL + MINT_LORA_RANK)")
     p_re.add_argument("--steps", type=int, default=3,

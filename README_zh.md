@@ -69,9 +69,9 @@ python demos/rl/adapters/environment_tooluse.py  # RL-3: 代码执行奖励的�
 
 ```bash
 python advanced/checkpoint.py save     --name my-ckpt
-python advanced/checkpoint.py download mint://<run-id>/weights/<ckpt-name> -o ./ckpts
+python advanced/checkpoint.py download tinker://<run-id>/weights/<ckpt-name> -o ./ckpts
 python advanced/checkpoint.py upload   ./ckpts/<archive>.tar.gz
-python advanced/checkpoint.py resume   ckpt_<id> --with-optimizer --steps 3
+python advanced/checkpoint.py resume   tinker://<run-id>/weights/<ckpt-name> --with-optimizer --steps 3
 ```
 
 详见 [`advanced/README.md`](advanced/README.md) 了解完整命令矩阵和检查点守护机制（`sampler_weights` vs `weights`）。
@@ -81,7 +81,7 @@ python advanced/checkpoint.py resume   ckpt_<id> --with-optimizer --steps 3
 如果你想验证 session-level Seq-MIS 配置是否能端到端生效：
 
 ```bash
-python advanced/validate_mis_rollout_correction.py --base-model Qwen/Qwen3-0.6B
+python advanced/validate_mis_rollout_correction.py --base-model Qwen/Qwen3-30B-A3B-Instruct-2507
 ```
 
 详见 [`docs/mis_rollout_correction.md`](docs/mis_rollout_correction.md) 了解前置条件、环境变量、预期输出和常见失败原因。

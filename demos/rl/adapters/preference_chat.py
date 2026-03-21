@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import random
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,26 @@ PROMPTS = [
 ]
 
 
+def _coerce_chat_template_tokens(tokenized: Any) -> list[int]:
+    if isinstance(tokenized, Mapping):
+        if "input_ids" not in tokenized:
+            raise TypeError("chat template output is missing `input_ids`")
+        tokenized = tokenized["input_ids"]
+    elif hasattr(tokenized, "input_ids"):
+        tokenized = getattr(tokenized, "input_ids")
+    if hasattr(tokenized, "tolist"):
+        tokenized = tokenized.tolist()
+    if isinstance(tokenized, tuple):
+        tokenized = list(tokenized)
+    if not isinstance(tokenized, list):
+        raise TypeError(
+            "chat template output must be a token list or mapping with `input_ids`"
+        )
+    if tokenized and isinstance(tokenized[0], list):
+        tokenized = tokenized[0]
+    return [int(token) for token in tokenized]
+
+
 class PreferenceChatAdapter(RLAdapter):
 
     def build_dataset(self) -> list[str]:
@@ -36,9 +57,11 @@ class PreferenceChatAdapter(RLAdapter):
     def make_prompt(self, sample: str, tokenizer: Any) -> list[int]:
         messages = [{"role": "user", "content": sample}]
         if hasattr(tokenizer, "apply_chat_template"):
-            return list(tokenizer.apply_chat_template(
-                messages, tokenize=True, add_generation_prompt=True
-            ))
+            return _coerce_chat_template_tokens(
+                tokenizer.apply_chat_template(
+                    messages, tokenize=True, add_generation_prompt=True
+                )
+            )
         return tokenizer.encode(f"User: {sample}\nAssistant:")
 
     def compute_reward(self, response: str, sample: str) -> float:

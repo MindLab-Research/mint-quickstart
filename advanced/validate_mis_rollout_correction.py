@@ -129,7 +129,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--api-key", default=_first_env("MINT_API_KEY", "TINKER_API_KEY"))
     parser.add_argument(
         "--base-model",
-        default=_first_env("MINT_BASE_MODEL", "TINKER_MODEL", default="Qwen/Qwen3-0.6B"),
+        default=_first_env(
+            "MINT_BASE_MODEL",
+            "TINKER_MODEL",
+            default="Qwen/Qwen3-30B-A3B-Instruct-2507",
+        ),
     )
     parser.add_argument(
         "--lora-rank",

@@ -69,9 +69,9 @@ If you want a full checkpoint lifecycle:
 
 ```bash
 python advanced/checkpoint.py save     --name my-ckpt
-python advanced/checkpoint.py download mint://<run-id>/weights/<ckpt-name> -o ./ckpts
+python advanced/checkpoint.py download tinker://<run-id>/weights/<ckpt-name> -o ./ckpts
 python advanced/checkpoint.py upload   ./ckpts/<archive>.tar.gz
-python advanced/checkpoint.py resume   ckpt_<id> --with-optimizer --steps 3
+python advanced/checkpoint.py resume   tinker://<run-id>/weights/<ckpt-name> --with-optimizer --steps 3
 ```
 
 See [`advanced/README.md`](advanced/README.md) for the full command matrix and guardrails (`sampler_weights` vs `weights`).
@@ -81,7 +81,7 @@ See [`advanced/README.md`](advanced/README.md) for the full command matrix and g
 If you want a focused end-to-end check for session-level Seq-MIS wiring:
 
 ```bash
-python advanced/validate_mis_rollout_correction.py --base-model Qwen/Qwen3-0.6B
+python advanced/validate_mis_rollout_correction.py --base-model Qwen/Qwen3-30B-A3B-Instruct-2507
 ```
 
 See [`docs/mis_rollout_correction.md`](docs/mis_rollout_correction.md) for prerequisites, env vars, expected output, and failure modes.
