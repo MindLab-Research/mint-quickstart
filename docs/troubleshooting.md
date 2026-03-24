@@ -35,6 +35,11 @@ curl -s https://mint.macaron.im/health
 ```
 If that returns OK, your network is fine and the server is up.
 
+If the default endpoint is slow, switch to one of these base URLs and retry:
+
+- Mainland China: `https://mint.macaron.xin/`
+- Outside Mainland China: `https://i18n.mint.macaron.xin/`
+
 ### `401 Unauthorized` / `403 Forbidden`
 
 **Symptom:** Server rejects your API key.
@@ -113,6 +118,8 @@ TINKER_BASE_URL=https://mint.macaron.im/
 TINKER_API_KEY=<your-mint-api-key>
 ```
 
+If the default endpoint is slow, use `https://mint.macaron.xin/` (Mainland China) or `https://i18n.mint.macaron.xin/` (outside Mainland China).
+
 All MinT API calls work identically with `import tinker` instead of `import mint`.
 
 ## Environment Variables Reference
@@ -120,7 +127,7 @@ All MinT API calls work identically with `import tinker` instead of `import mint
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `MINT_API_KEY` | Yes | — | API key for authentication |
-| `MINT_BASE_URL` | No | `https://mint.macaron.im/` | Server endpoint |
+| `MINT_BASE_URL` | No | `https://mint.macaron.im/` | Server endpoint; switch to `.xin` endpoints if the default is slow |
 | `MINT_BASE_MODEL` | No | `Qwen/Qwen3-0.6B` | Base model name |
 | `MINT_LORA_RANK` | No | `16` | LoRA adapter rank |
 | `HF_ENDPOINT` | No | — | HuggingFace mirror URL |

@@ -37,6 +37,10 @@ pip install git+https://github.com/MindLab-Research/mindlab-toolkit.git python-d
 MINT_API_KEY=sk-mint-your-api-key-here
 ```
 
+如果默认 base URL 较慢，可在 `MINT_BASE_URL` 中改用：
+- 境内：`https://mint.macaron.xin/`
+- 境外：`https://i18n.mint.macaron.xin/`
+
 运行快速入门脚本（一个脚本完成 SFT + RL）：
 ```bash
 python quickstart/quickstart.py
@@ -57,17 +61,30 @@ python demos/rl/adapters/environment_tooluse.py  # RL-3: 代码执行奖励的�
 
 所有 Demo 均可通过环境变量配置。详见 [`demos/rl/README.md`](demos/rl/README.md)。
 
-## 进阶流程（下载 -> 上传 -> 恢复训练）
+## 进阶工作流
 
-如果你需要完整的模型产物管理流程：
+### Checkpoint 闭环（保存 -> 下载 -> 上传 -> 恢复训练）
+
+如果你需要完整的 checkpoint 管理流程：
 
 ```bash
-python advanced/download_weights.py --run-id <training-run-id>
-MINT_UPLOAD_ARCHIVE=./downloads/<archive>.tar.gz python advanced/upload_weights.py
-MINT_RESUME_PATH=ckpt_<id> python advanced/resume_from_upload.py
+python advanced/checkpoint.py save     --name my-ckpt
+python advanced/checkpoint.py download mint://<run-id>/weights/<ckpt-name> -o ./ckpts
+python advanced/checkpoint.py upload   ./ckpts/<archive>.tar.gz
+python advanced/checkpoint.py resume   ckpt_<id> --with-optimizer --steps 3
 ```
 
 详见 [`advanced/README.md`](advanced/README.md) 了解完整命令矩阵和检查点守护机制（`sampler_weights` vs `weights`）。
+
+### MIS Rollout Correction 验证
+
+如果你想验证 session-level Seq-MIS 配置是否能端到端生效：
+
+```bash
+python advanced/validate_mis_rollout_correction.py --base-model Qwen/Qwen3-0.6B
+```
+
+详见 [`docs/mis_rollout_correction.md`](docs/mis_rollout_correction.md) 了解前置条件、环境变量、预期输出和常见失败原因。
 
 ## 仓库结构
 
@@ -86,7 +103,7 @@ mint-quickstart/
         environment_tooluse.py
     vlm/                    # 2 个 VLM Demo（即将上线）
     embodied/               # 1 个 Embodied Demo（即将上线）
-  advanced/                 # 下载/上传权重，恢复训练
+  advanced/                 # checkpoint 工作流与 MIS 验证
   docs/
     roadmap.md              # 6 个 Demo 的路线图及状态标签
     troubleshooting.md      # 常见问题与解决方案
@@ -108,6 +125,8 @@ TINKER_BASE_URL=https://mint.macaron.im/
 TINKER_API_KEY=<your-mint-api-key>
 ```
 
+如果 `https://mint.macaron.im/` 较慢，可改用 `https://mint.macaron.xin/`（境内）或 `https://i18n.mint.macaron.xin/`（境外）。
+
 所有代码使用 `import tinker` 与 `import mint` 完全等效。
 
 ## 文档
@@ -116,7 +135,8 @@ TINKER_API_KEY=<your-mint-api-key>
 - [常见问题](docs/troubleshooting.md) — 常见问题与解决方案
 - [迁移指南](docs/migration-from-minT-demo.md) — 从旧版 MinT-demo 仓库迁移
 - [RL Demo 详解](demos/rl/README.md) — 3 个已上线 RL Demo 的详细文档
-- [进阶流程](advanced/README.md) — 下载/上传/恢复训练工作流与检查点守护
+- [进阶流程](advanced/README.md) — checkpoint 工作流与 MIS 验证入口
+- [MIS Rollout Correction 验证](docs/mis_rollout_correction.md) — 面向高级 RL 用户的 Seq-MIS 验证流程
 - [实验报告](docs/experiments/quickstart-upload-download-resume-report.md) — 快速入门上传-下载-恢复验证模板/结果
 - [迁移技能](mint-skill/SKILL.md) — AI 助手从 verl/TRL/OpenRLHF 迁移的技能包
 

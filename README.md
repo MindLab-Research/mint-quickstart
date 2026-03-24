@@ -37,6 +37,10 @@ Create `.env` in the repo root:
 MINT_API_KEY=sk-mint-your-api-key-here
 ```
 
+If the default base URL is slow, use one of these endpoints in `MINT_BASE_URL`:
+- Mainland China: `https://mint.macaron.xin/`
+- Outside Mainland China: `https://i18n.mint.macaron.xin/`
+
 Run the quickstart (SFT then RL in one script):
 ```bash
 python quickstart/quickstart.py
@@ -57,17 +61,30 @@ python demos/rl/adapters/environment_tooluse.py  # RL-3: code gen with execution
 
 All demos are configurable via environment variables. See [`demos/rl/README.md`](demos/rl/README.md) for details.
 
-## Advanced Loop (Download -> Upload -> Resume)
+## Advanced Workflows
 
-If you want a full artifact management flow:
+### Checkpoint Loop (Save -> Download -> Upload -> Resume)
+
+If you want a full checkpoint lifecycle:
 
 ```bash
-python advanced/download_weights.py --run-id <training-run-id>
-MINT_UPLOAD_ARCHIVE=./downloads/<archive>.tar.gz python advanced/upload_weights.py
-MINT_RESUME_PATH=ckpt_<id> python advanced/resume_from_upload.py
+python advanced/checkpoint.py save     --name my-ckpt
+python advanced/checkpoint.py download mint://<run-id>/weights/<ckpt-name> -o ./ckpts
+python advanced/checkpoint.py upload   ./ckpts/<archive>.tar.gz
+python advanced/checkpoint.py resume   ckpt_<id> --with-optimizer --steps 3
 ```
 
 See [`advanced/README.md`](advanced/README.md) for the full command matrix and guardrails (`sampler_weights` vs `weights`).
+
+### MIS Rollout Correction Validation
+
+If you want a focused end-to-end check for session-level Seq-MIS wiring:
+
+```bash
+python advanced/validate_mis_rollout_correction.py --base-model Qwen/Qwen3-0.6B
+```
+
+See [`docs/mis_rollout_correction.md`](docs/mis_rollout_correction.md) for prerequisites, env vars, expected output, and failure modes.
 
 ## Repo Structure
 
@@ -86,7 +103,7 @@ mint-quickstart/
         environment_tooluse.py
     vlm/                    # 2 VLM demos (coming soon)
     embodied/               # 1 embodied demo (coming soon)
-  advanced/                 # Download/upload weights, resume training
+  advanced/                 # Checkpoint workflows and MIS validation
   docs/
     roadmap.md              # 6-demo roadmap with status tags
     troubleshooting.md      # Common issues and fixes
@@ -108,6 +125,8 @@ TINKER_BASE_URL=https://mint.macaron.im/
 TINKER_API_KEY=<your-mint-api-key>
 ```
 
+If `https://mint.macaron.im/` is slow, try `https://mint.macaron.xin/` (Mainland China) or `https://i18n.mint.macaron.xin/` (outside Mainland China).
+
 All code works identically with `import tinker` instead of `import mint`.
 
 ## Docs
@@ -116,7 +135,8 @@ All code works identically with `import tinker` instead of `import mint`.
 - [Troubleshooting](docs/troubleshooting.md) — common issues and solutions
 - [Migration Guide](docs/migration-from-minT-demo.md) — moving from old MinT-demo repo
 - [RL Demos](demos/rl/README.md) — detailed docs for the 3 available RL demos
-- [Advanced](advanced/README.md) — download/upload/resume workflow and checkpoint guardrails
+- [Advanced](advanced/README.md) — checkpoint workflows and MIS validation entry points
+- [MIS Rollout Correction](docs/mis_rollout_correction.md) — targeted Seq-MIS validation flow and troubleshooting
 - [Experiment Report](docs/experiments/quickstart-upload-download-resume-report.md) — quickstart upload-download-resume validation template/results
 - [Migration Skill](mint-skill/SKILL.md) — AI agent skill for migrating from verl/TRL/OpenRLHF
 - [中文 README](README_zh.md) — Chinese version of this document
