@@ -15,6 +15,7 @@ The single entry repo for learning [MinT](https://github.com/MindLab-Research/mi
 | 1 | **RL-1 Verifiable Math** | RL | Deterministic verifier | [`demos/rl/adapters/verifiable_math.py`](demos/rl/adapters/verifiable_math.py) |
 | 2 | **RL-2 Preference Chat** | RL | Pairwise/judge preference | [`demos/rl/adapters/preference_chat.py`](demos/rl/adapters/preference_chat.py) |
 | 3 | **RL-3 Environment Tool Use** | RL | Code execution feedback | [`demos/rl/adapters/environment_tooluse.py`](demos/rl/adapters/environment_tooluse.py) |
+| 4 | **Sampling Log** | Sampling | Train then inspect model responses | [`quickstart/sampling_log.py`](quickstart/sampling_log.py) |
 
 ### Coming Soon
 
@@ -49,6 +50,12 @@ python quickstart/quickstart.py
 Or open the interactive notebook:
 ```bash
 jupyter notebook quickstart/mint_quickstart.ipynb
+```
+
+Or run a focused quickstart recipe:
+```bash
+python quickstart/custom_reward.py
+python quickstart/custom_loss.py
 ```
 
 ## Run a Demo
@@ -86,6 +93,16 @@ python advanced/validate_mis_rollout_correction.py --base-model Qwen/Qwen3-30B-A
 
 See [`docs/mis_rollout_correction.md`](docs/mis_rollout_correction.md) for prerequisites, env vars, expected output, and failure modes.
 
+### Queue Status Polling
+
+Monitor queue position and estimated wait time for pending sample requests:
+
+```bash
+python advanced/queue_status.py
+```
+
+Uses the low-level `AsyncTinker` client with backpressure headers to read queue fields from 408 responses.
+
 ## Repo Structure
 
 ```
@@ -93,6 +110,9 @@ mint-quickstart/
   .env.example              # Template for API key configuration
   quickstart/
     quickstart.py           # SFT -> RL in one script
+    custom_reward.py        # Client-side reward shaping + importance_sampling
+    custom_loss.py          # Pairwise preference training via forward_backward_custom
+    sampling_log.py         # Train then inspect model responses
     mint_quickstart.ipynb   # Interactive notebook version
   demos/
     rl/                     # 3 RL demos (available)
@@ -103,7 +123,7 @@ mint-quickstart/
         environment_tooluse.py
     vlm/                    # 2 VLM demos (coming soon)
     embodied/               # 1 embodied demo (coming soon)
-  advanced/                 # Checkpoint workflows and MIS validation
+  advanced/                 # Checkpoint workflows, MIS validation, queue status
   docs/
     roadmap.md              # 6-demo roadmap with status tags
     troubleshooting.md      # Common issues and fixes
@@ -136,6 +156,7 @@ All code works identically with `import tinker` instead of `import mint`.
 - [Roadmap](docs/roadmap.md) — all 6 demos with availability status
 - [Troubleshooting](docs/troubleshooting.md) — common issues and solutions
 - [Migration Guide](docs/migration-from-minT-demo.md) — moving from old MinT-demo repo
+- [Quickstart Guide](quickstart/README.md) — first run plus focused custom reward / custom loss recipes
 - [RL Demos](demos/rl/README.md) — detailed docs for the 3 available RL demos
 - [Advanced](advanced/README.md) — checkpoint workflows and MIS validation entry points
 - [MIS Rollout Correction](docs/mis_rollout_correction.md) — targeted Seq-MIS validation flow and troubleshooting

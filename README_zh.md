@@ -15,6 +15,7 @@
 | 1 | **RL-1 可验证数学** | RL | 确定性验证器 | [`demos/rl/adapters/verifiable_math.py`](demos/rl/adapters/verifiable_math.py) |
 | 2 | **RL-2 偏好对话** | RL | 成对/裁判偏好 | [`demos/rl/adapters/preference_chat.py`](demos/rl/adapters/preference_chat.py) |
 | 3 | **RL-3 环境工具调用** | RL | 代码执行反馈 | [`demos/rl/adapters/environment_tooluse.py`](demos/rl/adapters/environment_tooluse.py) |
+| 4 | **采样日志** | 采样 | 训练后查看模型回答 | [`quickstart/sampling_log.py`](quickstart/sampling_log.py) |
 
 ### 即将上线
 
@@ -49,6 +50,12 @@ python quickstart/quickstart.py
 或打开交互式 Notebook：
 ```bash
 jupyter notebook quickstart/mint_quickstart.ipynb
+```
+
+或运行两个聚焦型 quickstart 示例：
+```bash
+python quickstart/custom_reward.py
+python quickstart/custom_loss.py
 ```
 
 ## 运行 Demo
@@ -86,6 +93,16 @@ python advanced/validate_mis_rollout_correction.py --base-model Qwen/Qwen3-30B-A
 
 详见 [`docs/mis_rollout_correction.md`](docs/mis_rollout_correction.md) 了解前置条件、环境变量、预期输出和常见失败原因。
 
+### 队列状态轮询
+
+监控采样请求的队列位置和预计等待时间：
+
+```bash
+python advanced/queue_status.py
+```
+
+使用底层 `AsyncTinker` 客户端和背压 header，从 408 响应中读取队列状态字段。
+
 ## 仓库结构
 
 ```
@@ -93,6 +110,9 @@ mint-quickstart/
   .env.example              # API Key 配置模板
   quickstart/
     quickstart.py           # 一个脚本完成 SFT -> RL
+    custom_reward.py        # 客户端自定义 reward + importance_sampling
+    custom_loss.py          # 用 forward_backward_custom 做偏好 loss
+    sampling_log.py         # 训练后查看模型回答
     mint_quickstart.ipynb   # 交互式 Notebook 版本
   demos/
     rl/                     # 3 个 RL Demo（已上线）
@@ -103,7 +123,7 @@ mint-quickstart/
         environment_tooluse.py
     vlm/                    # 2 个 VLM Demo（即将上线）
     embodied/               # 1 个 Embodied Demo（即将上线）
-  advanced/                 # checkpoint 工作流与 MIS 验证
+  advanced/                 # checkpoint 工作流、MIS 验证与队列状态
   docs/
     roadmap.md              # 6 个 Demo 的路线图及状态标签
     troubleshooting.md      # 常见问题与解决方案
@@ -136,6 +156,7 @@ TINKER_API_KEY=<your-mint-api-key>
 - [路线图](docs/roadmap.md) — 全部 6 个 Demo 及上线状态
 - [常见问题](docs/troubleshooting.md) — 常见问题与解决方案
 - [迁移指南](docs/migration-from-minT-demo.md) — 从旧版 MinT-demo 仓库迁移
+- [Quickstart 指南](quickstart/README.md) — 首次运行与 custom reward / custom loss 示例
 - [RL Demo 详解](demos/rl/README.md) — 3 个已上线 RL Demo 的详细文档
 - [进阶流程](advanced/README.md) — checkpoint 工作流与 MIS 验证入口
 - [MIS Rollout Correction 验证](docs/mis_rollout_correction.md) — 面向高级 RL 用户的 Seq-MIS 验证流程

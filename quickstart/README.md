@@ -36,6 +36,12 @@ python quickstart/quickstart.py
 jupyter notebook quickstart/mint_quickstart.ipynb
 ```
 
+**Focused recipes:**
+```bash
+python quickstart/custom_reward.py
+python quickstart/custom_loss.py
+```
+
 ## What You'll Learn
 
 The quickstart demonstrates a two-stage training pipeline:
@@ -96,7 +102,7 @@ STAGE 2: Reinforcement Learning (RL)
 
 RL checkpoint: ckpt_quickstart-rl-final_...
 
-Done! See demos/ for more advanced examples.
+Done! See demos/ and the focused quickstart recipes for more advanced examples.
 ```
 
 ## Configuration
@@ -116,7 +122,11 @@ All parameters are configurable via environment variables:
 
 ## Next Steps
 
-After the quickstart, explore the [RL demos](../demos/rl/) for deeper examples:
+After the quickstart, try the focused recipes:
+- `quickstart/custom_reward.py` — client-side reward shaping with partial credit and `importance_sampling`
+- `quickstart/custom_loss.py` — pairwise preference training with `forward_backward_custom`
+
+Then explore the [RL demos](../demos/rl/) for broader RL patterns:
 - **Verifiable Math**: deterministic reward with a programmatic verifier
 - **Preference Chat**: alignment RL with a helpfulness proxy
 - **Environment Tool Use**: code generation with execution-based reward
