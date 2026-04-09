@@ -71,8 +71,15 @@ Use the MinT endpoint that matches your region:
 
 The MinT Python SDK API has not changed. All existing code using `mint.ServiceClient()`, `training_client.forward_backward()`, etc. works as-is.
 
-If you use Tinker SDK (`import tinker`), it also continues to work with:
+If your old codebase uses the Tinker import style, the smallest MinT migration is:
+
+```python
+import mint as tinker
 ```
+
+Then keep the Tinker-style client code and point it at MinT:
+
+```bash
 TINKER_BASE_URL=<your-region-endpoint>
 TINKER_API_KEY=<your-mint-api-key>
 ```
@@ -80,3 +87,5 @@ TINKER_API_KEY=<your-mint-api-key>
 Use the MinT endpoint that matches your region:
 - Mainland China: `https://mint-cn.macaron.xin/`
 - Outside Mainland China: `https://mint.macaron.xin/`
+
+This is more accurate than saying “just swap key and URL” for raw upstream `import tinker`, because the upstream SDK still validates the `tml-` API key prefix locally. If you must keep the exact `import tinker` statement, import `mint` earlier in the same process before constructing Tinker clients.

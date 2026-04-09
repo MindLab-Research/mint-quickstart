@@ -144,13 +144,15 @@ mint-quickstart/
 
 ## Tinker SDK 兼容性
 
-如果你已有使用 `import tinker` 的代码：
+如果你已有使用 `import tinker` 的代码，迁移到 MinT 时最省事的方式是：
+
+```python
+import mint as tinker
+```
+
+然后把原来的 Tinker 风格 client surface 指到 MinT：
 
 ```bash
-pip install tinker
-```
-
-```
 TINKER_BASE_URL=<your-region-endpoint>
 TINKER_API_KEY=<your-mint-api-key>
 ```
@@ -159,7 +161,12 @@ TINKER_API_KEY=<your-mint-api-key>
 - 境内：`https://mint-cn.macaron.xin/`
 - 境外：`https://mint.macaron.xin/`
 
-所有代码使用 `import tinker` 与 `import mint` 完全等效。
+为什么推荐这样做：
+- 原生 upstream `import tinker` 仍会校验 `tml-` 前缀
+- MinT API key 以 `sk-` 开头
+- `import mint as tinker` 可以保持 Tinker 风格代码形状，同时启用 MinT 的兼容补丁
+
+如果你必须保留原样的 `import tinker` 语句，请先在同一进程里 `import mint`，再构造 Tinker client。
 
 ## 文档
 

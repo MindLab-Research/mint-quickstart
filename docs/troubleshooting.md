@@ -108,13 +108,15 @@ MINT_RL_BATCH=4 MINT_RL_GROUP=2 python demos/rl/adapters/verifiable_math.py
 
 ## Tinker SDK Compatibility
 
-If you have existing code using `import tinker`:
+If your existing experiment starts with `import tinker`, the safest MinT migration is:
+
+```python
+import mint as tinker
+```
+
+Then reuse the Tinker-style client surface with MinT credentials:
 
 ```bash
-pip install tinker
-```
-
-```
 TINKER_BASE_URL=<your-region-endpoint>
 TINKER_API_KEY=<your-mint-api-key>
 ```
@@ -123,7 +125,7 @@ Use the MinT endpoint that matches your region:
 - Mainland China: `https://mint-cn.macaron.xin/`
 - Outside Mainland China: `https://mint.macaron.xin/`
 
-All MinT API calls work identically with `import tinker` instead of `import mint`.
+Do not assume raw upstream `import tinker` plus an `sk-*` MinT key will work. The upstream SDK still validates the `tml-` prefix locally. If you must keep the exact `import tinker` statement, import `mint` earlier in the same process before constructing Tinker clients.
 
 ## Environment Variables Reference
 

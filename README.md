@@ -144,13 +144,15 @@ mint-quickstart/
 
 ## Tinker SDK Compatibility
 
-If you have existing code using `import tinker`:
+If you have existing code using `import tinker`, the lowest-friction MinT migration is:
+
+```python
+import mint as tinker
+```
+
+Then point the Tinker-style client surface at MinT:
 
 ```bash
-pip install tinker
-```
-
-```
 TINKER_BASE_URL=<your-region-endpoint>
 TINKER_API_KEY=<your-mint-api-key>
 ```
@@ -159,7 +161,12 @@ Use the MinT endpoint that matches your region:
 - Mainland China: `https://mint-cn.macaron.xin/`
 - Outside Mainland China: `https://mint.macaron.xin/`
 
-All code works identically with `import tinker` instead of `import mint`.
+Why this is the recommended path:
+- raw upstream `import tinker` still validates API keys with the `tml-` prefix
+- MinT API keys start with `sk-`
+- `import mint as tinker` keeps the Tinker-style code shape while enabling MinT compatibility patches
+
+If you must keep the exact `import tinker` statement, import `mint` earlier in the same process before constructing Tinker clients.
 
 ## Docs
 
