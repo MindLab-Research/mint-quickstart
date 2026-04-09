@@ -10,20 +10,26 @@
 
 ### 已上线
 
-| # | Demo | 方向 | 奖励来源 | 脚本 |
-|---|------|------|----------|------|
+| # | Demo | 方向 | 奖励来源 / 形状 | 脚本 |
+|---|------|------|-----------------|------|
 | 1 | **RL-1 可验证数学** | RL | 确定性验证器 | [`demos/rl/adapters/verifiable_math.py`](demos/rl/adapters/verifiable_math.py) |
 | 2 | **RL-2 偏好对话** | RL | 成对/裁判偏好 | [`demos/rl/adapters/preference_chat.py`](demos/rl/adapters/preference_chat.py) |
 | 3 | **RL-3 环境工具调用** | RL | 代码执行反馈 | [`demos/rl/adapters/environment_tooluse.py`](demos/rl/adapters/environment_tooluse.py) |
 | 4 | **采样日志** | 采样 | 训练后查看模型回答 | [`quickstart/sampling_log.py`](quickstart/sampling_log.py) |
+| 5 | **Embodied-1 OpenPI FAST SDK** | Embodied | 通过 MinT-only `mintx` OpenPI client 处理三路相机 + state + action token 监督 | [`demos/embodied/openpi_vla_sdk.py`](demos/embodied/openpi_vla_sdk.py) |
+
+### 参考示例
+
+| Demo | 方向 | 为什么存在 | 脚本 |
+|------|------|------------|------|
+| **OpenPI FAST HTTP** | Embodied | 直接展示 raw wire protocol，方便调试和核对请求 shape | [`demos/embodied/openpi_vla_http.py`](demos/embodied/openpi_vla_http.py) |
 
 ### 即将上线
 
 | # | Demo | 方向 | 描述 | 状态 |
 |---|------|------|------|------|
-| 4 | **VLM-1 视觉问答** | VLM | 图像 + 问题 → 有依据的回答 | 计划中 (M2) |
-| 5 | **VLM-2 视觉指令** | VLM | 图像 + 任务 → 动作/决策 | 计划中 (M2) |
-| 6 | **Embodied-1 仿真智能体** | Embodied | 简化环境 → 动作序列 | 计划中 (M3) |
+| 6 | **VLM-1 视觉问答** | VLM | 图像 + 问题 → 有依据的回答 | 计划中 (M2) |
+| 7 | **VLM-2 视觉指令** | VLM | 图像 + 任务 → 动作/决策 | 计划中 (M2) |
 
 ## 快速开始
 
@@ -64,6 +70,8 @@ python quickstart/custom_loss.py
 python demos/rl/adapters/verifiable_math.py      # RL-1: 精确匹配奖励的数学推理
 python demos/rl/adapters/preference_chat.py      # RL-2: 有用性代理奖励的对话
 python demos/rl/adapters/environment_tooluse.py  # RL-3: 代码执行奖励的代码生成
+python demos/embodied/openpi_vla_sdk.py          # Embodied-1: 通过 mintx / mint.mint 调 OpenPI
+python demos/embodied/openpi_vla_http.py         # 参考: 原始 OpenPI FAST HTTP 请求形状
 ```
 
 所有 Demo 均可通过环境变量配置。详见 [`demos/rl/README.md`](demos/rl/README.md)。
@@ -122,13 +130,15 @@ mint-quickstart/
         preference_chat.py
         environment_tooluse.py
     vlm/                    # 2 个 VLM Demo（即将上线）
-    embodied/               # 1 个 Embodied Demo（即将上线）
+    embodied/               # 主 SDK demo + 低层 HTTP reference
   advanced/                 # checkpoint 工作流、MIS 验证与队列状态
   docs/
     roadmap.md              # 6 个 Demo 的路线图及状态标签
     troubleshooting.md      # 常见问题与解决方案
     migration-from-minT-demo.md
     experiments/            # 快速入门流程的验证报告
+  .pi/
+    skills/                 # 项目内置 pi skill，用于 API、排障和 issue 上报
   mint-skill/               # AI 编程助手迁移技能
 ```
 
@@ -158,9 +168,11 @@ TINKER_API_KEY=<your-mint-api-key>
 - [迁移指南](docs/migration-from-minT-demo.md) — 从旧版 MinT-demo 仓库迁移
 - [Quickstart 指南](quickstart/README.md) — 首次运行与 custom reward / custom loss 示例
 - [RL Demo 详解](demos/rl/README.md) — 3 个已上线 RL Demo 的详细文档
+- [Embodied Demos](demos/embodied/README.md) — 主 OpenPI SDK 示例 + 低层 HTTP reference
 - [进阶流程](advanced/README.md) — checkpoint 工作流与 MIS 验证入口
 - [MIS Rollout Correction 验证](docs/mis_rollout_correction.md) — 面向高级 RL 用户的 Seq-MIS 验证流程
 - [实验报告](docs/experiments/quickstart-upload-download-resume-report.md) — 快速入门上传-下载-恢复验证模板/结果
+- [Pi Skills](.pi/skills/README.md) — 项目内置 pi skills，覆盖 API、排障和 issue 上报
 - [迁移技能](mint-skill/SKILL.md) — AI 助手从 verl/TRL/OpenRLHF 迁移的技能包
 
 ## 联系我们

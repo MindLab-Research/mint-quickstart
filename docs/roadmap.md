@@ -11,7 +11,7 @@
 | 3 | **RL-3 Environment Tool Use** | RL | **Available Now** | `demos/rl/adapters/environment_tooluse.py` |
 | 4 | **VLM-1 Vision QA** | VLM | Coming Soon | `demos/vlm/vision_qa.py` |
 | 5 | **VLM-2 Vision Instruction** | VLM | Coming Soon | `demos/vlm/vision_instruction.py` |
-| 6 | **Embodied-1 Simulator Agent** | Embodied | Coming Soon | `demos/embodied/embodied_nav.py` |
+| 6 | **Embodied-1 OpenPI FAST SDK** | Embodied | **Available Now** | `demos/embodied/openpi_vla_sdk.py` |
 
 ## Track Descriptions
 
@@ -32,13 +32,13 @@ Two VLM demos demonstrating multimodal understanding:
 
 **Unblock conditions:** MinT SDK VLM support reaches stable; VLM-capable base model available on server.
 
-### Track C: Embodied Agent (Coming Soon)
+### Track C: Embodied Agent (Available Now)
 
-One embodied demo showing decision and action:
+One embodied demo now pins down the current MinT SDK path for VLA:
 
-- **Simulator Agent**: simplified environment → action sequences with task success
+- **OpenPI FAST SDK**: top-level `mint` for the Tinker-compatible client surface plus `mint.mint` / `mintx` for OpenPI-specific training
 
-**Unblock conditions:** RL + VLM tracks stable; lightweight simulator environment selected and integrated.
+**Reference path:** keep `openpi_vla_http.py` as the low-level wire-protocol version for debugging and backend comparison.
 
 ## Milestones
 
@@ -46,7 +46,7 @@ One embodied demo showing decision and action:
 |-----------|----------|--------|
 | **M1** | Repo restructure + rl_core.py + 3 RL demos | **Done** |
 | **M2** | 2 VLM demos + VLM docs | Planned |
-| **M3** | 1 Embodied demo + end-to-end narrative | Planned |
+| **M3** | 1 embodied VLA SDK demo + low-level protocol reference | In Progress |
 
 ## Capability Ladder
 
@@ -57,8 +57,8 @@ Track A: RL (Reasoning & Alignment)        ← Available Now
 Track B: VLM (Perception & Multimodal)     ← Coming Soon
   └── Vision QA → Vision Instruction
 
-Track C: Embodied (Decision & Action)      ← Coming Soon
-  └── Simulator Agent
+Track C: Embodied (Decision & Action)      ← Available Now
+  └── OpenPI FAST SDK
 ```
 
 The full path demonstrates MinT's range: **reasoning → perception → action**.

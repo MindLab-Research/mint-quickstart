@@ -130,3 +130,7 @@ Then explore the [RL demos](../demos/rl/) for broader RL patterns:
 - **Verifiable Math**: deterministic reward with a programmatic verifier
 - **Preference Chat**: alignment RL with a helpfulness proxy
 - **Environment Tool Use**: code generation with execution-based reward
+
+If you want the current SDK path for VLA, see [Embodied Demos](../demos/embodied/) and `demos/embodied/openpi_vla_sdk.py`. It uses `import mint` for the Tinker-compatible client surface and `import mint.mint as mintx` for the MinT-only OpenPI extension.
+
+If you want the raw wire protocol for debugging or backend comparison, see `demos/embodied/openpi_vla_http.py`. That file keeps the HTTP request shape visible without going through the SDK helper layer.

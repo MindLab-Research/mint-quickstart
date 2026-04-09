@@ -10,20 +10,26 @@ The single entry repo for learning [MinT](https://github.com/MindLab-Research/mi
 
 ### Available Now
 
-| # | Demo | Track | Reward Source | Script |
-|---|------|-------|---------------|--------|
+| # | Demo | Track | Reward Source / Shape | Script |
+|---|------|-------|------------------------|--------|
 | 1 | **RL-1 Verifiable Math** | RL | Deterministic verifier | [`demos/rl/adapters/verifiable_math.py`](demos/rl/adapters/verifiable_math.py) |
 | 2 | **RL-2 Preference Chat** | RL | Pairwise/judge preference | [`demos/rl/adapters/preference_chat.py`](demos/rl/adapters/preference_chat.py) |
 | 3 | **RL-3 Environment Tool Use** | RL | Code execution feedback | [`demos/rl/adapters/environment_tooluse.py`](demos/rl/adapters/environment_tooluse.py) |
 | 4 | **Sampling Log** | Sampling | Train then inspect model responses | [`quickstart/sampling_log.py`](quickstart/sampling_log.py) |
+| 5 | **Embodied-1 OpenPI FAST SDK** | Embodied | MinT-only `mintx` OpenPI client over 3 camera images + state + action-token supervision | [`demos/embodied/openpi_vla_sdk.py`](demos/embodied/openpi_vla_sdk.py) |
+
+### Reference
+
+| Demo | Track | Why it exists | Script |
+|------|-------|---------------|--------|
+| **OpenPI FAST HTTP** | Embodied | Shows the raw wire protocol directly for debugging and request-shape reference | [`demos/embodied/openpi_vla_http.py`](demos/embodied/openpi_vla_http.py) |
 
 ### Coming Soon
 
 | # | Demo | Track | Description | Status |
 |---|------|-------|-------------|--------|
-| 4 | **VLM-1 Vision QA** | VLM | Image + question -> grounded answer | Planned (M2) |
-| 5 | **VLM-2 Vision Instruction** | VLM | Image + task -> action/decision | Planned (M2) |
-| 6 | **Embodied-1 Simulator Agent** | Embodied | Simplified env -> action sequences | Planned (M3) |
+| 6 | **VLM-1 Vision QA** | VLM | Image + question -> grounded answer | Planned (M2) |
+| 7 | **VLM-2 Vision Instruction** | VLM | Image + task -> action/decision | Planned (M2) |
 
 ## Quick Start
 
@@ -64,6 +70,8 @@ python quickstart/custom_loss.py
 python demos/rl/adapters/verifiable_math.py      # RL-1: math with exact-match reward
 python demos/rl/adapters/preference_chat.py      # RL-2: chat with helpfulness proxy
 python demos/rl/adapters/environment_tooluse.py  # RL-3: code gen with execution reward
+python demos/embodied/openpi_vla_sdk.py          # Embodied-1: OpenPI via mintx / mint.mint
+python demos/embodied/openpi_vla_http.py         # Reference: raw OpenPI FAST HTTP wire shape
 ```
 
 All demos are configurable via environment variables. See [`demos/rl/README.md`](demos/rl/README.md) for details.
@@ -122,13 +130,15 @@ mint-quickstart/
         preference_chat.py
         environment_tooluse.py
     vlm/                    # 2 VLM demos (coming soon)
-    embodied/               # 1 embodied demo (coming soon)
+    embodied/               # primary SDK demo + low-level HTTP reference
   advanced/                 # Checkpoint workflows, MIS validation, queue status
   docs/
     roadmap.md              # 6-demo roadmap with status tags
     troubleshooting.md      # Common issues and fixes
     migration-from-minT-demo.md
     experiments/            # Validation reports for quickstart flows
+  .pi/
+    skills/                 # Project-local pi skills for API, debugging, and issue reporting
   mint-skill/               # AI coding agent migration skill
 ```
 
@@ -158,8 +168,10 @@ All code works identically with `import tinker` instead of `import mint`.
 - [Migration Guide](docs/migration-from-minT-demo.md) — moving from old MinT-demo repo
 - [Quickstart Guide](quickstart/README.md) — first run plus focused custom reward / custom loss recipes
 - [RL Demos](demos/rl/README.md) — detailed docs for the 3 available RL demos
+- [Embodied Demos](demos/embodied/README.md) — primary OpenPI SDK example plus low-level HTTP reference
 - [Advanced](advanced/README.md) — checkpoint workflows and MIS validation entry points
 - [MIS Rollout Correction](docs/mis_rollout_correction.md) — targeted Seq-MIS validation flow and troubleshooting
 - [Experiment Report](docs/experiments/quickstart-upload-download-resume-report.md) — quickstart upload-download-resume validation template/results
+- [Pi Skills](.pi/skills/README.md) — project-local pi skills for API, debugging, and issue reporting
 - [Migration Skill](mint-skill/SKILL.md) — AI agent skill for migrating from verl/TRL/OpenRLHF
 - [中文 README](README_zh.md) — Chinese version of this document
