@@ -48,6 +48,39 @@ MINT_API_KEY=sk-your-api-key-here
 - 境内：`https://mint-cn.macaron.xin/`
 - 境外：`https://mint.macaron.xin/`
 
+## 常见起步问题
+
+### 我应该做 SFT 还是 RL？
+
+- 如果你已经知道模型应该输出什么，并且有标注答案，使用 **SFT**。
+- 如果你没有唯一标准答案，但能用 reward、verifier、测试或环境反馈给模型行为打分，使用 **RL**。
+- 如果两者都有，可以组合使用。常见做法是先用 SFT 建立基础行为，再用 RL 做目标优化，但这不是所有任务都必须遵守的固定顺序。
+
+### MinT 支持 SFT 吗？
+
+支持。MinT 直接支持 SFT。
+
+标准 SFT 路径就是：
+- `forward_backward(..., loss_fn="cross_entropy")`
+- `optim_step(...)`
+
+### 应该用境外还是境内域名？
+
+按你的网络路径来选：
+- 境内 -> `https://mint-cn.macaron.xin/`
+- 境外 -> `https://mint.macaron.xin/`
+
+如果不确定，先用与你所在区域一致的域名。最实际的判断标准是延迟更低、连接更稳定。
+
+### `MINT_API_KEY` 从哪里获取？
+
+`MINT_API_KEY` 目前由 Mind Lab 团队发放。
+
+申请方式：
+- 访问 `https://macaron.im/mindlab`
+- 使用 **Schedule a Demo**
+- 或发邮件到 `contact@mindlab.ltd`
+
 运行快速入门脚本（一个脚本完成 SFT + RL）：
 ```bash
 python quickstart/quickstart.py

@@ -48,6 +48,39 @@ Use the MinT endpoint that matches your region:
 - Mainland China: `https://mint-cn.macaron.xin/`
 - Outside Mainland China: `https://mint.macaron.xin/`
 
+## Common First Questions
+
+### Should I use SFT or RL?
+
+- Use **SFT** when you already know what the model should say or do and you have labeled target outputs.
+- Use **RL** when you do not have one fixed target answer but you can score the model's behavior with a reward, verifier, test suite, or environment feedback.
+- If you have both, you can combine them. The common pattern is SFT for the basic behavior, then RL for optimization, but that is not a required order for every task.
+
+### Does MinT support SFT?
+
+Yes. MinT supports SFT directly.
+
+The standard SFT path is:
+- `forward_backward(..., loss_fn="cross_entropy")`
+- `optim_step(...)`
+
+### Which domain should I use?
+
+Choose by your network path:
+- Mainland China -> `https://mint-cn.macaron.xin/`
+- Outside Mainland China -> `https://mint.macaron.xin/`
+
+If you are unsure, try the one that matches your region first. The practical goal is lower latency and stable connectivity.
+
+### Where do I get `MINT_API_KEY`?
+
+`MINT_API_KEY` is currently issued by the Mind Lab team.
+
+To request access:
+- go to `https://macaron.im/mindlab`
+- use **Schedule a Demo**
+- or email `contact@mindlab.ltd`
+
 Run the quickstart (SFT then RL in one script):
 ```bash
 python quickstart/quickstart.py

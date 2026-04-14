@@ -24,6 +24,30 @@ Use the MinT endpoint that matches your region:
 - Mainland China: `https://mint-cn.macaron.xin/`
 - Outside Mainland China: `https://mint.macaron.xin/`
 
+## Common First Questions
+
+### Should I use SFT or RL?
+
+- Use **SFT** when you have labeled target outputs.
+- Use **RL** when you can score behavior with a reward, verifier, test suite, or environment feedback.
+- If you have both, you can combine them. This quickstart shows both stages, but your own task may need only one of them.
+
+### Does MinT support SFT?
+
+Yes. SFT is a standard MinT path through `loss_fn="cross_entropy"`.
+
+### Which domain should I use?
+
+Choose by your network path:
+- Mainland China -> `https://mint-cn.macaron.xin/`
+- Outside Mainland China -> `https://mint.macaron.xin/`
+
+### Where do I get `MINT_API_KEY`?
+
+Request access from the Mind Lab team:
+- `https://macaron.im/mindlab` -> **Schedule a Demo**
+- or email `contact@mindlab.ltd`
+
 ## Run
 
 **Script (recommended for first run):**
