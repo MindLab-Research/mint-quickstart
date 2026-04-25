@@ -122,7 +122,7 @@ python advanced/checkpoint.py upload   ./ckpts/<archive>.tar.gz
 python advanced/checkpoint.py resume   tinker://<run-id>/weights/<ckpt-name> --with-optimizer --steps 3
 ```
 
-详见 [`advanced/README.md`](advanced/README.md) 了解完整命令矩阵和检查点守护机制（`sampler_weights` vs `weights`）。
+详见 [`advanced/README.md`](advanced/README.md) 了解完整命令矩阵、保留 optimizer 的恢复形状（`create_lora_training_client(...)` + `load_state_with_optimizer(...)`），以及检查点守护机制（`sampler_weights` vs `weights`）。
 
 ### MIS Rollout Correction 验证
 

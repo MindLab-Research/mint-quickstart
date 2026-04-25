@@ -122,7 +122,7 @@ python advanced/checkpoint.py upload   ./ckpts/<archive>.tar.gz
 python advanced/checkpoint.py resume   tinker://<run-id>/weights/<ckpt-name> --with-optimizer --steps 3
 ```
 
-See [`advanced/README.md`](advanced/README.md) for the full command matrix and guardrails (`sampler_weights` vs `weights`).
+See [`advanced/README.md`](advanced/README.md) for the full command matrix, the optimizer-preserving resume shape (`create_lora_training_client(...)` + `load_state_with_optimizer(...)`), and guardrails (`sampler_weights` vs `weights`).
 
 ### MIS Rollout Correction Validation
 

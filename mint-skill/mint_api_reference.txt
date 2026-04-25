@@ -879,11 +879,12 @@ We'll start with a couple of general pages that'll be relevant to almost all of 
 
 # Saving and loading weights and optimizer state
 
-During training, you'll need to save checkpoints for two main purposes: *sampling* (to test your model) and *resuming training* (to continue from where you left off). The `TrainingClient` provides three methods to handle these cases:
+During training, you'll need to save checkpoints for two main purposes: *sampling* (to test your model) and *resuming training* (to continue from where you left off). The `TrainingClient` provides these methods to handle those cases:
 
 1. `save_weights_for_sampler()`: saves a copy of the model weights that can be used for sampling.
 2. `save_state()`: saves the weights and the optimizer state. You can fully resume training from this checkpoint.
-3. `load_state()`: load the weights and the optimizer state. You can fully resume training from this checkpoint.
+3. `load_state_with_optimizer()`: loads weights and optimizer state into an already-created matching training client.
+4. `load_state()`: loads weights only. Do not use it when you need optimizer-preserving resume.
 
 Note that (1) is faster and requires less storage space than (2).
 
@@ -916,17 +917,24 @@ sampling_client = training_client.save_weights_and_get_sampling_client(name="000
 
 ### Example: Saving to resume training
 
-Use `save_state()` and `load_state()` when you need to pause and continue training with full optimizer state preserved:
+Use `save_state()` and `load_state_with_optimizer()` when you need to pause and continue training with full optimizer state preserved. In a new process, first create a matching LoRA training client, then load the checkpoint into it:
 
 ```python
 # Save a checkpoint that you can resume from
 resume_path = training_client.save_state(name="0010").result().path
 
-# Load that checkpoint
-training_client.load_state(resume_path)
+# In a later process, recreate the same LoRA shape
+training_client = service_client.create_lora_training_client(
+    base_model=base_model,
+    rank=rank,
+    train_mlp=True,
+    train_attn=True,
+    train_unembed=True,
+)
+training_client.load_state_with_optimizer(resume_path).result()
 ```
 
-### When to use `save_state()` and `load_state()`:
+### When to use `save_state()` and `load_state_with_optimizer()`:
 
 
 - Multi-step training pipelines (e.g. supervised learning followed by reinforcement learning)

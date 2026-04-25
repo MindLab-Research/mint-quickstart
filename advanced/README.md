@@ -64,10 +64,23 @@ MINT_API_KEY=... python advanced/checkpoint.py resume tinker://run-id/weights/my
 MINT_API_KEY=... python advanced/checkpoint.py resume tinker://run-id/weights/my-ckpt-state --with-optimizer --steps 3
 ```
 
-For weights-only resume, the script first tries SDK auto-detection. If the server returns 404 for a raw checkpoint path, it falls back to `MINT_BASE_MODEL` / `MINT_LORA_RANK` (or their defaults) and loads the state directly.
+For a true training resume, prefer `--with-optimizer`. Internally the script creates a fresh LoRA training client with the same model/rank/options and then calls `load_state_with_optimizer(path).result()`.
+
+```python
+training_client = service_client.create_lora_training_client(
+    base_model=model,
+    rank=rank,
+    train_mlp=True,
+    train_attn=True,
+    train_unembed=True,
+)
+training_client.load_state_with_optimizer(path).result()
+```
+
+Weights-only resume is different: it resets optimizer state. That mode first tries SDK auto-detection. If the server returns 404 for a raw checkpoint path, it falls back to `MINT_BASE_MODEL` / `MINT_LORA_RANK` (or their defaults) and calls `load_state(path).result()`.
 
 Options:
-- `--with-optimizer` — preserve optimizer momentum (requires `MINT_BASE_MODEL`, `MINT_LORA_RANK`)
+- `--with-optimizer` — preserve optimizer momentum (requires matching `MINT_BASE_MODEL`, `MINT_LORA_RANK`, and LoRA options)
 - `--steps` — SFT steps to run after resume (default: 3)
 - `--lr` — learning rate (default: `$MINT_RL_LR` or `5e-5`)
 - `--save-name` — name for checkpoint saved after training (default: `resumed-checkpoint`)
