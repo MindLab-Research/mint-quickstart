@@ -53,7 +53,7 @@ for base_dir in (REPO_ROOT.parent, REPO_ROOT):
     break
 
 import mint
-import mint.mint as mintx
+import mint.recipe as recipe
 import torch
 import torch.nn.functional as F
 import tinker
@@ -178,12 +178,12 @@ def flatten_preference_pairs_renderer(
         ]
 
         chosen_mi, chosen_w = renderer.build_supervised_example(chosen_messages)
-        chosen_datum = mintx.renderers.datum_from_model_input_weights(
+        chosen_datum = recipe.datum_from_model_input_weights(
             chosen_mi, chosen_w, max_length=max_length
         )
 
         rejected_mi, rejected_w = renderer.build_supervised_example(rejected_messages)
-        rejected_datum = mintx.renderers.datum_from_model_input_weights(
+        rejected_datum = recipe.datum_from_model_input_weights(
             rejected_mi, rejected_w, max_length=max_length
         )
 
@@ -265,8 +265,8 @@ def main() -> int:
         tokenizer = training_client.get_tokenizer()
         print(f"Model: {MODEL}, Vocab: {tokenizer.vocab_size:,}")
 
-        renderer_name = mintx.renderers.get_recommended_renderer_name(MODEL)
-        renderer = mintx.renderers.get_renderer(renderer_name, tokenizer)
+        renderer_name = recipe.get_recommended_renderer_name(MODEL)
+        renderer = recipe.renderers.get_renderer(renderer_name, tokenizer)
         print(f"Renderer: {renderer_name}")
 
         data = flatten_preference_pairs_renderer(PREFERENCE_PAIRS, renderer, MAX_TOK)

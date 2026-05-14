@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MinT Quickstart (renderer variant) - SFT using mintx.renderers.
+"""MinT Quickstart (renderer variant) - SFT using recipe.renderers.
 
 Same arithmetic SFT as quickstart.py stage 1, but uses the renderer API
 (build_supervised_example + datum_from_model_input_weights) instead
@@ -53,7 +53,7 @@ for base_dir in (REPO_ROOT.parent, REPO_ROOT):
     break
 
 import mint
-import mint.mint as mintx
+import mint.recipe as recipe
 import tinker
 from mint import types
 
@@ -148,8 +148,8 @@ def main() -> int:
         tokenizer = training_client.get_tokenizer()
         print(f"Model: {MODEL}, Vocab: {tokenizer.vocab_size:,}\n")
 
-        renderer_name = mintx.renderers.get_recommended_renderer_name(MODEL)
-        renderer = mintx.renderers.get_renderer(renderer_name, tokenizer)
+        renderer_name = recipe.get_recommended_renderer_name(MODEL)
+        renderer = recipe.renderers.get_renderer(renderer_name, tokenizer)
         print(f"Renderer: {renderer_name}")
 
         print("\n" + "=" * 50)
@@ -160,7 +160,7 @@ def main() -> int:
         sft_data = []
         for messages in all_messages:
             model_input, weights = renderer.build_supervised_example(messages)
-            datum = mintx.renderers.datum_from_model_input_weights(
+            datum = recipe.datum_from_model_input_weights(
                 model_input, weights, max_length=MAX_LENGTH
             )
             sft_data.append(datum)
