@@ -1,0 +1,29 @@
+# Wave 1
+quickstart/quickstart.py
+quickstart/custom_loss.py
+quickstart/custom_reward.py
+quickstart/sampling_log.py
+demos/rl/adapters/verifiable_math.py
+demos/rl/adapters/preference_chat.py
+demos/rl/adapters/environment_tooluse.py
+demos/embodied/openpi_vla_sdk.py
+demos/embodied/openpi_vla_http.py
+advanced/checkpoint.py
+
+# Wave 2
+concepts/rendering.py
+concepts/completers.py
+concepts/evaluations.py
+concepts/async_patterns.py
+
+# Wave 3
+recipes/sft_hyperparameters.py
+recipes/rl_hyperparameters.py
+recipes/dpo_native.py
+recipes/multi_turn_rl.py
+recipes/multi_agent_rl.py
+recipes/distillation.py
+recipes/rlhf_pipeline.py
+
+# Wave 4
+recipes/lora_adapter.py
