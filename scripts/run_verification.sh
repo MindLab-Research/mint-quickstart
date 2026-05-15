@@ -123,7 +123,7 @@ run_target() {
         fi
         echo "## $started_at"
         echo
-        echo "- runner: lysrain21"
+        echo "- runner: $(whoami)"
         echo "- hardware: remote MinT cluster (no local GPU)"
         echo "- endpoint: ${MINT_BASE_URL%/}"
         echo "- runtime_s: $runtime"

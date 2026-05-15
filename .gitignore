@@ -1,6 +1,8 @@
 # Project-specific
 .claude/
 .issue-handoffs/
+*.verified.md
+*.run.log
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
