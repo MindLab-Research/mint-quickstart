@@ -1,163 +1,332 @@
 #!/usr/bin/env python3
 """MinT Recipe: RL Hyperparameter Sweep
 
-Sweep over KL penalty, group size, and temperature on a simple math task.
-Demonstrates: kl_penalty_coef ∈ {0.0, 0.05, 0.1} × group_size ∈ {4, 8, 16} × temperature ∈ {0.7, 1.0}.
+Run a real RL sweep on a tiny arithmetic MessageEnv using recipe.rl.train.main().
+The default grid is 2 KL values x 2 temperatures x 2 group sizes = 8 configs.
 
 Run:
-  python recipes/rl_hyperparameters.py
+  MINT_API_KEY=sk-xxx python recipes/rl_hyperparameters.py
 
-All training runs against a remote MinT server.
+Useful overrides:
+  MINT_RL_STEPS=1 MINT_RL_KL_COEFS=0.0,0.02 MINT_RL_TEMPS=0.7,1.0 MINT_RL_GROUPS=2,4 python recipes/rl_hyperparameters.py
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
+import re
 import sys
+import time
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
+from _common import (  # noqa: E402
+    configured_base_url,
+    extract_content,
+    supported_model_count,
+    make_service_client,
+)
 
-def load_env_file(path: Path) -> None:
-    if not path.exists():
-        return
-    for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if stripped.startswith("export "):
-            stripped = stripped[len("export "):].lstrip()
-        if "=" not in stripped:
-            continue
-        key, value = stripped.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        if key and key not in os.environ:
-            os.environ[key] = value
-
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-load_env_file(REPO_ROOT / ".env")
-
-for base_dir in (REPO_ROOT.parent, REPO_ROOT):
-    for src_dir in ("mindlab-toolkit-alpha/src", "mindlab-toolkit/src"):
-        mint_src = base_dir / src_dir
-        if mint_src.exists() and str(mint_src) not in sys.path:
-            sys.path.insert(0, str(mint_src))
-            break
-    else:
-        continue
-    break
-
-import mint
-import tinker
-from mint import types
+import chz  # noqa: E402
+import mint.recipe as recipe  # noqa: E402
+from mint.recipe import EnvFromMessageEnv, MessageEnv, MessageStepResult, get_tokenizer  # noqa: E402
 
 
 MODEL = os.environ.get("MINT_BASE_MODEL", "Qwen/Qwen3-0.6B")
-RL_STEPS = int(os.environ.get("MINT_RL_STEPS", "3"))
+RANK = int(os.environ.get("MINT_LORA_RANK", "16"))
+RL_STEPS = int(os.environ.get("MINT_RL_STEPS", "1"))
+BATCH_SIZE = int(os.environ.get("MINT_RL_BATCH", "1"))
+MAX_TOKENS = int(os.environ.get("MINT_RL_MAX_TOKENS", "64"))
+LOG_ROOT = Path(os.environ.get("MINT_LOG_ROOT", "/tmp"))
 
 
-def _configured_base_url() -> str:
-    base_url = os.environ.get("MINT_BASE_URL") or os.environ.get("TINKER_BASE_URL")
-    if not base_url:
-        base_url = "https://mint.macaron.xin/"
-    return base_url
+PROBLEMS = [
+    ("What is 2 + 3? Answer with only the number.", "5"),
+    ("What is 4 * 6? Answer with only the number.", "24"),
+    ("What is 12 - 7? Answer with only the number.", "5"),
+    ("What is 18 / 3? Answer with only the number.", "6"),
+]
 
 
-def _require_api_key() -> str:
-    api_key = (os.environ.get("MINT_API_KEY") or os.environ.get("TINKER_API_KEY") or "").strip()
-    if api_key:
-        return api_key
-    raise RuntimeError(
-        "MINT_API_KEY not found. Set `MINT_API_KEY=sk-your-api-key-here` in the shell "
-        f"or add it to `{REPO_ROOT / '.env'}` before running this script."
+def _parse_float_list(env_name: str, default: list[float]) -> list[float]:
+    raw = os.environ.get(env_name)
+    if not raw:
+        return default
+    return [float(item.strip()) for item in raw.split(",") if item.strip()]
+
+
+def _parse_int_list(env_name: str, default: list[int]) -> list[int]:
+    raw = os.environ.get(env_name)
+    if not raw:
+        return default
+    return [int(item.strip()) for item in raw.split(",") if item.strip()]
+
+
+def _first_number(text: str) -> str | None:
+    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    return match.group(0) if match else None
+
+
+class ArithmeticMessageEnv(MessageEnv):
+    """Single-turn arithmetic environment for quick RL sweeps."""
+
+    def __init__(self, question: str, answer: str):
+        self.question = question
+        self.answer = answer
+
+    async def initial_observation(self) -> list[dict]:
+        return [
+            {
+                "role": "system",
+                "content": "You are a precise calculator. Reply with only the final number.",
+            },
+            {"role": "user", "content": self.question},
+        ]
+
+    async def step(self, message: dict) -> MessageStepResult:
+        content = extract_content(message).strip()
+        prediction = _first_number(content)
+        correct = prediction == self.answer
+        reward = 1.0 if correct else -0.25
+        return MessageStepResult(
+            reward=reward,
+            episode_done=True,
+            next_messages=[],
+            metrics={
+                "correct": float(correct),
+                "invalid_format": float(prediction is None),
+            },
+        )
+
+
+@dataclass(frozen=True)
+class ArithmeticEnvGroupBuilder(recipe.rl.types.EnvGroupBuilder):
+    question: str
+    answer: str
+    group_size: int
+    renderer_name: str
+    model_name: str
+
+    async def make_envs(self) -> Sequence[recipe.rl.types.Env]:
+        tokenizer = get_tokenizer(self.model_name)
+        renderer = recipe.renderers.get_renderer(self.renderer_name, tokenizer)
+        return [
+            EnvFromMessageEnv(
+                renderer=renderer,
+                message_env=ArithmeticMessageEnv(self.question, self.answer),
+                max_trajectory_tokens=512,
+                max_generation_tokens=MAX_TOKENS,
+            )
+            for _ in range(self.group_size)
+        ]
+
+    def logging_tags(self) -> list[str]:
+        return ["arithmetic"]
+
+
+class ArithmeticRLDataset(recipe.rl.types.RLDataset):
+    def __init__(self, problems, batch_size, group_size, renderer_name, model_name):
+        self.problems = problems
+        self.batch_size = batch_size
+        self.group_size = group_size
+        self.renderer_name = renderer_name
+        self.model_name = model_name
+
+    def __len__(self) -> int:
+        return max(1, (len(self.problems) + self.batch_size - 1) // self.batch_size)
+
+    def get_batch(self, index: int):
+        start = (index * self.batch_size) % len(self.problems)
+        batch = self.problems[start : start + self.batch_size]
+        if len(batch) < self.batch_size:
+            batch += self.problems[: self.batch_size - len(batch)]
+        return [
+            ArithmeticEnvGroupBuilder(
+                question=question,
+                answer=answer,
+                group_size=self.group_size,
+                renderer_name=self.renderer_name,
+                model_name=self.model_name,
+            )
+            for question, answer in batch
+        ]
+
+
+@chz.chz
+class ArithmeticRLDatasetBuilder(recipe.rl.types.RLDatasetBuilder):
+    batch_size: int
+    group_size: int
+    renderer_name: str
+    model_name: str
+
+    async def __call__(self):
+        return (
+            ArithmeticRLDataset(
+                PROBLEMS,
+                self.batch_size,
+                self.group_size,
+                self.renderer_name,
+                self.model_name,
+            ),
+            None,
+        )
+
+
+def _read_last_metrics(log_path: Path) -> dict[str, Any]:
+    metrics_path = log_path / "metrics.jsonl"
+    if not metrics_path.exists():
+        return {}
+    last = {}
+    for line in metrics_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            last = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+    return last
+
+
+async def run_config(
+    *,
+    renderer_name: str,
+    kl_coef: float,
+    temperature: float,
+    group_size: int,
+    run_id: str,
+) -> dict[str, Any]:
+    label = f"kl={kl_coef}, temp={temperature}, group={group_size}"
+    safe_kl = str(kl_coef).replace(".", "p")
+    safe_temp = str(temperature).replace(".", "p")
+    log_path = LOG_ROOT / f"mint-rl-sweep-{run_id}-kl{safe_kl}-t{safe_temp}-g{group_size}"
+
+    print(f"\n--- Training config: {label} ---")
+    print(f"Log path: {log_path}")
+
+    kl_reference_config = (
+        recipe.rl.train.KLReferenceConfig(base_model=MODEL) if kl_coef > 0 else None
     )
 
+    config = recipe.rl.train.Config(
+        learning_rate=float(os.environ.get("MINT_RL_LR", "1e-5")),
+        dataset_builder=ArithmeticRLDatasetBuilder(
+            batch_size=BATCH_SIZE,
+            group_size=group_size,
+            renderer_name=renderer_name,
+            model_name=MODEL,
+        ),
+        model_name=MODEL,
+        renderer_name=renderer_name,
+        lora_rank=RANK,
+        max_tokens=MAX_TOKENS,
+        temperature=temperature,
+        kl_penalty_coef=kl_coef,
+        kl_reference_config=kl_reference_config,
+        loss_fn="importance_sampling",
+        log_path=str(log_path),
+        max_steps=RL_STEPS,
+        save_every=999,
+        eval_every=999,
+        ttl_seconds=3600,
+        num_groups_to_log=1,
+        rollout_json_export=False,
+    )
+    await recipe.rl.train.main(config=config)
+    metrics = _read_last_metrics(log_path)
+    mean_reward = None
+    correct_rate = None
+    for key, value in metrics.items():
+        if key in {"env/all/reward/total", "env/all/mean_episode_reward"} and isinstance(value, int | float):
+            mean_reward = float(value)
+        if key.endswith("/correct") and isinstance(value, int | float):
+            correct_rate = float(value)
+    return {
+        "kl_penalty_coef": kl_coef,
+        "temperature": temperature,
+        "group_size": group_size,
+        "steps": RL_STEPS,
+        "mean_episode_reward": mean_reward,
+        "correct_rate": correct_rate,
+        "log_path": str(log_path),
+    }
 
-def _status_code_from_error(exc: Exception) -> int | None:
-    status_code = getattr(exc, "status_code", None)
-    if isinstance(status_code, int):
-        return status_code
-    response = getattr(exc, "response", None)
-    response_status = getattr(response, "status_code", None)
-    return response_status if isinstance(response_status, int) else None
+
+async def run_sweep() -> list[dict[str, Any]]:
+    kl_coefs = _parse_float_list("MINT_RL_KL_COEFS", [0.0, 0.02])
+    temperatures = _parse_float_list("MINT_RL_TEMPS", [0.7, 1.0])
+    group_sizes = _parse_int_list("MINT_RL_GROUPS", [2, 4])
+    renderer_name = recipe.get_recommended_renderer_name(MODEL)
+    run_id = str(int(time.time()))
+
+    print("\n=== RL Hyperparameter Sweep ===")
+    print(f"Model:          {MODEL}")
+    print(f"Renderer:       {renderer_name}")
+    print(f"Steps/config:   {RL_STEPS}")
+    print(f"Batch size:     {BATCH_SIZE}")
+    print(f"KL coefficients:{kl_coefs}")
+    print(f"Temperatures:   {temperatures}")
+    print(f"Group sizes:    {group_sizes}")
+    print(f"Grid size:      {len(kl_coefs)} x {len(temperatures)} x {len(group_sizes)} = {len(kl_coefs) * len(temperatures) * len(group_sizes)} configs")
+
+    results: list[dict[str, Any]] = []
+    for kl_coef in kl_coefs:
+        for temperature in temperatures:
+            for group_size in group_sizes:
+                results.append(
+                    await run_config(
+                        renderer_name=renderer_name,
+                        kl_coef=kl_coef,
+                        temperature=temperature,
+                        group_size=group_size,
+                        run_id=run_id,
+                    )
+                )
+    return results
 
 
-def _supported_model_count(capabilities: object) -> int | None:
-    models = getattr(capabilities, "supported_models", None)
-    return len(models) if isinstance(models, list) else None
-
-
-def preflight_connection(service_client: mint.ServiceClient):
-    base_url = _configured_base_url()
-    try:
-        return service_client.get_server_capabilities()
-    except tinker.APITimeoutError as exc:
-        raise RuntimeError(
-            "Auth preflight timed out while contacting "
-            f"{base_url}. Check `MINT_BASE_URL` and retry."
-        ) from exc
-    except tinker.APIConnectionError as exc:
-        raise RuntimeError(
-            "Auth preflight could not reach "
-            f"{base_url}. Check `MINT_BASE_URL`, network access, and server status."
-        ) from exc
-    except tinker.APIStatusError as exc:
-        status_code = _status_code_from_error(exc)
-        if status_code in {401, 403}:
-            raise RuntimeError(
-                "Auth preflight was rejected by the MinT server "
-                f"(HTTP {status_code}). Check that `MINT_API_KEY` is valid for {base_url}."
-            ) from exc
-        raise RuntimeError(
-            "Auth preflight failed with an unexpected MinT server response "
-            f"(HTTP {status_code or 'unknown'}) from {base_url}."
-        ) from exc
+def print_summary(results: list[dict[str, Any]]) -> None:
+    print("\n=== RL Grid Summary ===")
+    print(f"{'KL':<8} {'Temp':<8} {'Group':<8} {'Steps':<8} {'Mean reward':<14} {'Correct':<10} {'Log path'}")
+    print("-" * 110)
+    for result in results:
+        reward = result["mean_episode_reward"]
+        reward_text = f"{reward:.3f}" if isinstance(reward, float) else "n/a"
+        correct = result["correct_rate"]
+        correct_text = f"{correct:.2f}" if isinstance(correct, float) else "n/a"
+        print(
+            f"{result['kl_penalty_coef']:<8.2f} "
+            f"{result['temperature']:<8.1f} "
+            f"{result['group_size']:<8} "
+            f"{result['steps']:<8} "
+            f"{reward_text:<14} "
+            f"{correct_text:<10} "
+            f"{result['log_path']}"
+        )
 
 
 def main() -> int:
-    """Run RL hyperparameter sweep."""
     try:
-        _require_api_key()
-        base_url = _configured_base_url()
         print("Connecting to MinT server...")
-        print(f"Endpoint: {base_url}")
+        print(f"Endpoint: {configured_base_url()}")
+        _service_client, capabilities = make_service_client()
+        supported = supported_model_count(capabilities)
+        if supported is None:
+            print("Auth preflight: OK")
+        else:
+            print(f"Auth preflight: OK ({supported} supported models)")
 
-        service_client = mint.ServiceClient()
-        capabilities = preflight_connection(service_client)
-        print(f"Server supports {_supported_model_count(capabilities)} models")
-
-        # Grid parameters
-        kl_penalties = [0.0, 0.05, 0.1]
-        group_sizes = [4, 8, 16]
-        temperatures = [0.7, 1.0]
-
-        total_configs = len(kl_penalties) * len(group_sizes) * len(temperatures)
-
-        print(f"\n=== RL Hyperparameter Sweep ===")
-        print(f"Model: {MODEL}")
-        print(f"RL Steps: {RL_STEPS} per config")
-        print(f"KL penalties: {kl_penalties}")
-        print(f"Group sizes: {group_sizes}")
-        print(f"Temperatures: {temperatures}")
-        print(f"Grid size: {len(kl_penalties)} × {len(group_sizes)} × {len(temperatures)} = {total_configs} configs\n")
-
-        print("=== Grid Search Results ===")
-        print(f"{'KL Coef':<12} {'Group':<8} {'Temp':<8} {'Steps':<8} {'Status':<20}")
-        print("-" * 56)
-
-        for kl_coef in kl_penalties:
-            for group_size in group_sizes:
-                for temp in temperatures:
-                    print(f"{kl_coef:<12.2f} {group_size:<8} {temp:<8.1f} {RL_STEPS:<8} Ready for training")
-
-        print(f"\nTotal configurations ready: {total_configs}")
-        print("Each will run for 3 RL steps against the MinT server.")
-        print("Mean reward per configuration will be logged and compared.")
+        results = asyncio.run(run_sweep())
+        print_summary(results)
         return 0
-
     except RuntimeError as exc:
         print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"Unexpected error: {exc}", file=sys.stderr)
         return 1
 
 

@@ -1,205 +1,199 @@
 #!/usr/bin/env python3
 """MinT Recipe: Multi-Agent RL
 
-Multi-agent training where two policies interact with each other or environment.
-Demonstrates self-play and symmetric/asymmetric reward patterns.
+Create two independent LoRA training clients, let two agents sample responses in
+a simple debate interaction, score both agents, and train both clients with
+low-level TrainingClient APIs. If concurrent clients fail, fall back to one
+role-switching client.
 
 Run:
-  python recipes/multi_agent_rl.py
-
-All training runs against a remote MinT server.
+  MINT_API_KEY=sk-xxx python recipes/multi_agent_rl.py
 """
 
 from __future__ import annotations
 
 import os
+import re
 import sys
-from pathlib import Path
+from typing import Any
 
+from _common import (  # noqa: E402
+    configured_base_url,
+    supported_model_count,
+    make_service_client,
+)
 
-def load_env_file(path: Path) -> None:
-    if not path.exists():
-        return
-    for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if stripped.startswith("export "):
-            stripped = stripped[len("export "):].lstrip()
-        if "=" not in stripped:
-            continue
-        key, value = stripped.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        if key and key not in os.environ:
-            os.environ[key] = value
-
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-load_env_file(REPO_ROOT / ".env")
-
-for base_dir in (REPO_ROOT.parent, REPO_ROOT):
-    for src_dir in ("mindlab-toolkit-alpha/src", "mindlab-toolkit/src"):
-        mint_src = base_dir / src_dir
-        if mint_src.exists() and str(mint_src) not in sys.path:
-            sys.path.insert(0, str(mint_src))
-            break
-    else:
-        continue
-    break
-
-import mint
-import tinker
-from mint import types
+from mint import types  # noqa: E402
 
 
 MODEL = os.environ.get("MINT_BASE_MODEL", "Qwen/Qwen3-0.6B")
 RANK = int(os.environ.get("MINT_LORA_RANK", "16"))
-RL_STEPS = int(os.environ.get("MINT_RL_STEPS", "3"))
+RL_STEPS = int(os.environ.get("MINT_MULTI_AGENT_STEPS", "1"))
+LR = float(os.environ.get("MINT_MULTI_AGENT_LR", "1e-5"))
+MAX_TOKENS = int(os.environ.get("MINT_MULTI_AGENT_MAX_TOKENS", "32"))
+TEMPERATURE = float(os.environ.get("MINT_MULTI_AGENT_TEMPERATURE", "0.7"))
+
+TASKS = [
+    {"question": "What is 2 + 3?", "answer": "5"},
+    {"question": "What is 4 + 6?", "answer": "10"},
+]
 
 
-def _configured_base_url() -> str:
-    base_url = os.environ.get("MINT_BASE_URL") or os.environ.get("TINKER_BASE_URL")
-    if not base_url:
-        base_url = "https://mint.macaron.xin/"
-    return base_url
+def _extract_number(text: str) -> str | None:
+    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    return match.group(0) if match else None
 
 
-def _require_api_key() -> str:
-    api_key = (os.environ.get("MINT_API_KEY") or os.environ.get("TINKER_API_KEY") or "").strip()
-    if api_key:
-        return api_key
-    raise RuntimeError(
-        "MINT_API_KEY not found. Set `MINT_API_KEY=sk-your-api-key-here` in the shell "
-        f"or add it to `{REPO_ROOT / '.env'}` before running this script."
+def build_sft_datum(tokenizer: Any, prompt: str, target: str) -> types.Datum:
+    prompt_tokens = tokenizer.encode(prompt, add_special_tokens=True)
+    completion_tokens = tokenizer.encode(f" {target}", add_special_tokens=False)
+    completion_tokens.append(tokenizer.eos_token_id)
+    all_tokens = prompt_tokens + completion_tokens
+    return types.Datum(
+        model_input=types.ModelInput.from_ints(tokens=all_tokens[:-1]),
+        loss_fn_inputs={
+            "target_tokens": all_tokens[1:],
+            "weights": [0.0] * (len(prompt_tokens) - 1) + [1.0] * len(completion_tokens),
+        },
     )
 
 
-def _status_code_from_error(exc: Exception) -> int | None:
-    status_code = getattr(exc, "status_code", None)
-    if isinstance(status_code, int):
-        return status_code
-    response = getattr(exc, "response", None)
-    response_status = getattr(response, "status_code", None)
-    return response_status if isinstance(response_status, int) else None
+def sample_text(sampling_client: Any, tokenizer: Any, prompt: str) -> str:
+    prompt_tokens = tokenizer.encode(prompt, add_special_tokens=True)
+    result = sampling_client.sample(
+        prompt=types.ModelInput.from_ints(tokens=prompt_tokens),
+        num_samples=1,
+        sampling_params=types.SamplingParams(
+            max_tokens=MAX_TOKENS,
+            temperature=TEMPERATURE,
+            stop=[tokenizer.eos_token_id],
+        ),
+    ).result()
+    return tokenizer.decode(result.sequences[0].tokens).strip()
 
 
-def _supported_model_count(capabilities: object) -> int | None:
-    models = getattr(capabilities, "supported_models", None)
-    return len(models) if isinstance(models, list) else None
+def evaluate_response(response: str, answer: str) -> float:
+    return 1.0 if _extract_number(response) == answer else -0.25
 
 
-def preflight_connection(service_client: mint.ServiceClient):
-    base_url = _configured_base_url()
-    try:
-        return service_client.get_server_capabilities()
-    except tinker.APITimeoutError as exc:
-        raise RuntimeError(
-            "Auth preflight timed out while contacting "
-            f"{base_url}. Check `MINT_BASE_URL` and retry."
-        ) from exc
-    except tinker.APIConnectionError as exc:
-        raise RuntimeError(
-            "Auth preflight could not reach "
-            f"{base_url}. Check `MINT_BASE_URL`, network access, and server status."
-        ) from exc
-    except tinker.APIStatusError as exc:
-        status_code = _status_code_from_error(exc)
-        if status_code in {401, 403}:
-            raise RuntimeError(
-                "Auth preflight was rejected by the MinT server "
-                f"(HTTP {status_code}). Check that `MINT_API_KEY` is valid for {base_url}."
-            ) from exc
-        raise RuntimeError(
-            "Auth preflight failed with an unexpected MinT server response "
-            f"(HTTP {status_code or 'unknown'}) from {base_url}."
-        ) from exc
+def train_agent(training_client: Any, tokenizer: Any, prompt: str, answer: str, label: str) -> float:
+    datum = build_sft_datum(tokenizer, prompt, answer)
+    fb = training_client.forward_backward([datum], loss_fn="cross_entropy").result()
+    training_client.optim_step(types.AdamParams(learning_rate=LR)).result()
+    loss = 0.0
+    total_weight = 0.0
+    output = fb.loss_fn_outputs[0]
+    logprobs = output["logprobs"]
+    if hasattr(logprobs, "tolist"):
+        logprobs = logprobs.tolist()
+    weights = datum.loss_fn_inputs["weights"]
+    if hasattr(weights, "tolist"):
+        weights = weights.tolist()
+    for logprob, weight in zip(logprobs, weights):
+        loss += -float(logprob) * float(weight)
+        total_weight += float(weight)
+    value = loss / max(total_weight, 1.0)
+    print(f"  {label} train_cross_entropy={value:.6f}")
+    return value
+
+
+def create_two_agents(service_client: Any):
+    agent_a = service_client.create_lora_training_client(
+        base_model=MODEL,
+        rank=RANK,
+        train_mlp=True,
+        train_attn=True,
+        train_unembed=True,
+    )
+    agent_b = service_client.create_lora_training_client(
+        base_model=MODEL,
+        rank=RANK,
+        train_mlp=True,
+        train_attn=True,
+        train_unembed=True,
+    )
+    return agent_a, agent_b
+
+
+def run_two_agent_training(service_client: Any) -> None:
+    print("\n=== Concurrent two-agent training ===")
+    agent_a, agent_b = create_two_agents(service_client)
+    tokenizer_a = agent_a.get_tokenizer()
+    tokenizer_b = agent_b.get_tokenizer()
+    print("Created two independent LoRA training clients.")
+
+    for step in range(1, RL_STEPS + 1):
+        task = TASKS[(step - 1) % len(TASKS)]
+        question = task["question"]
+        answer = task["answer"]
+        print(f"\nStep {step}: {question} (answer={answer})")
+
+        sampler_a = agent_a.save_weights_and_get_sampling_client(name=f"agent-a-step-{step}")
+        sampler_b = agent_b.save_weights_and_get_sampling_client(name=f"agent-b-step-{step}")
+
+        prompt_a = f"Agent A: answer the math question with only the number. {question}\nAnswer:"
+        response_a = sample_text(sampler_a, tokenizer_a, prompt_a)
+        reward_a = evaluate_response(response_a, answer)
+        print(f"  Agent A response: {response_a[:120]} | reward={reward_a}")
+
+        prompt_b = (
+            f"Agent B: Agent A answered '{response_a}'. "
+            f"Now answer the same question with only the number. {question}\nAnswer:"
+        )
+        response_b = sample_text(sampler_b, tokenizer_b, prompt_b)
+        reward_b = evaluate_response(response_b, answer)
+        print(f"  Agent B response: {response_b[:120]} | reward={reward_b}")
+
+        # Low-level manual training: reinforce the known correct answer for both roles.
+        train_agent(agent_a, tokenizer_a, prompt_a, answer, "Agent A")
+        train_agent(agent_b, tokenizer_b, prompt_b, answer, "Agent B")
+
+    ckpt_a = agent_a.save_weights_for_sampler(name="multi-agent-a-final").result()
+    ckpt_b = agent_b.save_weights_for_sampler(name="multi-agent-b-final").result()
+    print("\n=== Multi-Agent Summary ===")
+    print("Mode: concurrent two-client")
+    print(f"Agent A checkpoint: {ckpt_a.path}")
+    print(f"Agent B checkpoint: {ckpt_b.path}")
+
+
+def run_role_switching_fallback(service_client: Any, reason: Exception) -> None:
+    print("\nWarning: concurrent LoRA path failed; falling back to single-agent role switching.")
+    print(f"Reason: {reason}")
+    agent = service_client.create_lora_training_client(base_model=MODEL, rank=RANK)
+    tokenizer = agent.get_tokenizer()
+    for step in range(1, RL_STEPS + 1):
+        task = TASKS[(step - 1) % len(TASKS)]
+        for role in ["Agent A", "Agent B"]:
+            prompt = f"{role}: answer with only the number. {task['question']}\nAnswer:"
+            train_agent(agent, tokenizer, prompt, task["answer"], role)
+    ckpt = agent.save_weights_for_sampler(name="multi-agent-role-switch-final").result()
+    print("\n=== Multi-Agent Summary ===")
+    print("Mode: single-client role-switching fallback")
+    print(f"Checkpoint: {ckpt.path}")
 
 
 def main() -> int:
-    """Run multi-agent RL training."""
     try:
-        _require_api_key()
-        base_url = _configured_base_url()
         print("Connecting to MinT server...")
-        print(f"Endpoint: {base_url}")
+        print(f"Endpoint: {configured_base_url()}")
+        service_client, capabilities = make_service_client()
+        supported = supported_model_count(capabilities)
+        if supported is None:
+            print("Auth preflight: OK")
+        else:
+            print(f"Auth preflight: OK ({supported} supported models)")
+        print(f"Model: {MODEL}; rank: {RANK}; steps: {RL_STEPS}")
 
-        service_client = mint.ServiceClient()
-        capabilities = preflight_connection(service_client)
-        print(f"Server supports {_supported_model_count(capabilities)} models")
-
-        print(f"\n=== Multi-Agent RL Setup ===")
-        print(f"Model: {MODEL}")
-        print(f"LoRA Rank: {RANK}")
-        print(f"RL Steps: {RL_STEPS}")
-
-        print("\n=== Self-Play Pattern ===")
-        print("Two agents compete or cooperate:")
-        print("  1. Create two sampling clients (both from same base model, different LoRA)")
-        print("  2. Agent A generates response to prompt")
-        print("  3. Agent B generates response to prompt + Agent A's response")
-        print("  4. Evaluate outcome (who answered better, or did they cooperate)")
-        print("  5. Assign rewards to both agents")
-        print("  6. Train both in parallel")
-
-        print("\n=== Debate Example ===")
-        print("Prompt: 'What is 2+3?'")
-        print("  Agent A response: ' 5'")
-        print("  Agent B response: ' 5' (agrees)")
-        print("  Judge outcome: Both correct")
-        print("  Reward: +1.0 for both")
-        print("")
-        print("Alternative:")
-        print("  Agent A response: ' 4'")
-        print("  Agent B response: ' 5' (disagrees)")
-        print("  Judge outcome: B is correct")
-        print("  Reward: +0.0 for A, +1.0 for B")
-
-        print("\n=== Training Two Agents ===")
-        print("Both can share the same base model but have separate LoRA weights:")
-        print("""
-# Create separate LoRA training clients
-lora_a = await service_client.create_lora_training_client_async(
-    base_model=MODEL, rank=RANK, name="agent_a"
-)
-lora_b = await service_client.create_lora_training_client_async(
-    base_model=MODEL, rank=RANK, name="agent_b"
-)
-
-# Create separate sampling clients for each LoRA
-sampler_a = await service_client.create_sampling_client_async(
-    weights=lora_a_weights
-)
-sampler_b = await service_client.create_sampling_client_async(
-    weights=lora_b_weights
-)
-
-# Training loop: alternate or parallel training
-for step in range(RL_STEPS):
-    # Sample both agents concurrently
-    samples_a = await sampler_a.sample_async(prompt)
-    samples_b = await sampler_b.sample_async(prompt + samples_a.text)
-
-    # Compute rewards and advantages
-    reward_a, reward_b = evaluate_interaction(samples_a, samples_b)
-
-    # Train both in parallel
-    await asyncio.gather(
-        lora_a.forward_backward(...),
-        lora_b.forward_backward(...)
-    )
-""")
-
-        print("\n=== Asymmetric Rewards ===")
-        print("Agents don't need symmetric rewards:")
-        print("  Winner: +1.0")
-        print("  Loser:  -0.5")
-        print("  Tie:    +0.0 for both")
-
+        try:
+            run_two_agent_training(service_client)
+        except Exception as exc:
+            run_role_switching_fallback(service_client, exc)
         return 0
-
     except RuntimeError as exc:
         print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"Unexpected error: {exc}", file=sys.stderr)
         return 1
 
 

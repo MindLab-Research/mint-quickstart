@@ -1,200 +1,271 @@
 #!/usr/bin/env python3
 """MinT Recipe: SFT Hyperparameter Sweep
 
-Sweep over learning_rate and LoRA rank on a small multiplication dataset.
-Demonstrates grid search over hyperparameters: LR ∈ {1e-5, 5e-5, 2e-4} × rank ∈ {8, 16, 32}.
+Run a small real supervised fine-tuning grid on MinT. The recipe sweeps
+2 learning rates x 2 LoRA ranks, trains each config for 2 SFT steps by default,
+and prints a summary of the final loss from each run.
 
 Run:
-  python recipes/sft_hyperparameters.py
+  MINT_API_KEY=sk-xxx python recipes/sft_hyperparameters.py
 
-All training runs against a remote MinT server.
+Useful overrides:
+  MINT_SFT_STEPS=1 MINT_SFT_LRS=1e-5,5e-5 MINT_LORA_RANKS=8,16 python recipes/sft_hyperparameters.py
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import random
 import re
 import sys
+import time
 from pathlib import Path
+from typing import Any
 
+from _common import (  # noqa: E402
+    configured_base_url,
+    supported_model_count,
+    make_service_client,
+)
 
-def load_env_file(path: Path) -> None:
-    if not path.exists():
-        return
-    for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if stripped.startswith("export "):
-            stripped = stripped[len("export "):].lstrip()
-        if "=" not in stripped:
-            continue
-        key, value = stripped.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        if key and key not in os.environ:
-            os.environ[key] = value
-
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-load_env_file(REPO_ROOT / ".env")
-
-for base_dir in (REPO_ROOT.parent, REPO_ROOT):
-    for src_dir in ("mindlab-toolkit-alpha/src", "mindlab-toolkit/src"):
-        mint_src = base_dir / src_dir
-        if mint_src.exists() and str(mint_src) not in sys.path:
-            sys.path.insert(0, str(mint_src))
-            break
-    else:
-        continue
-    break
-
-import mint
-import tinker
-from mint import types
+import chz  # noqa: E402
+import mint.recipe as recipe  # noqa: E402
+from mint.recipe import get_tokenizer  # noqa: E402
 
 
 MODEL = os.environ.get("MINT_BASE_MODEL", "Qwen/Qwen3-0.6B")
-STEPS = int(os.environ.get("MINT_SFT_STEPS", "5"))
+STEPS = int(os.environ.get("MINT_SFT_STEPS", "2"))
+BATCH_SIZE = int(os.environ.get("MINT_SFT_BATCH", "4"))
+MAX_LENGTH = int(os.environ.get("MINT_SFT_MAX_LENGTH", "512"))
+DATASET_SIZE = int(os.environ.get("MINT_SFT_DATASET_SIZE", "16"))
+LOG_ROOT = Path(os.environ.get("MINT_LOG_ROOT", "/tmp"))
 
 random.seed(42)
 
 
-def _configured_base_url() -> str:
-    base_url = os.environ.get("MINT_BASE_URL") or os.environ.get("TINKER_BASE_URL")
-    if not base_url:
-        base_url = "https://mint.macaron.xin/"
-    return base_url
+def _parse_float_list(env_name: str, default: list[float]) -> list[float]:
+    raw = os.environ.get(env_name)
+    if not raw:
+        return default
+    return [float(item.strip()) for item in raw.split(",") if item.strip()]
 
 
-def _require_api_key() -> str:
-    api_key = (os.environ.get("MINT_API_KEY") or os.environ.get("TINKER_API_KEY") or "").strip()
-    if api_key:
-        return api_key
-    raise RuntimeError(
-        "MINT_API_KEY not found. Set `MINT_API_KEY=sk-your-api-key-here` in the shell "
-        f"or add it to `{REPO_ROOT / '.env'}` before running this script."
+def _parse_int_list(env_name: str, default: list[int]) -> list[int]:
+    raw = os.environ.get(env_name)
+    if not raw:
+        return default
+    return [int(item.strip()) for item in raw.split(",") if item.strip()]
+
+
+def generate_sft_conversations(n: int) -> list[list[dict[str, str]]]:
+    """Generate deterministic arithmetic chat conversations for SFT."""
+    conversations: list[list[dict[str, str]]] = []
+    for _ in range(n):
+        a = random.randint(10, 99)
+        b = random.randint(10, 99)
+        conversations.append(
+            [
+                {"role": "user", "content": f"What is {a} * {b}?"},
+                {"role": "assistant", "content": str(a * b)},
+            ]
+        )
+    return conversations
+
+
+class ArithmeticSFTDataset(recipe.supervised.types.SupervisedDataset):
+    """Tiny in-memory supervised dataset using conversation_to_datum()."""
+
+    def __init__(
+        self,
+        conversations: list[list[dict[str, str]]],
+        model_name: str,
+        renderer_name: str,
+        batch_size: int,
+        max_length: int,
+    ):
+        tokenizer = get_tokenizer(model_name)
+        renderer = recipe.renderers.get_renderer(renderer_name, tokenizer)
+        self.datums = [
+            recipe.supervised.conversation_to_datum(
+                conversation,
+                renderer,
+                max_length=max_length,
+            )
+            for conversation in conversations
+        ]
+        self.batch_size = batch_size
+
+    def __len__(self) -> int:
+        return max(1, (len(self.datums) + self.batch_size - 1) // self.batch_size)
+
+    def get_batch(self, index: int):
+        start = (index * self.batch_size) % len(self.datums)
+        batch = self.datums[start : start + self.batch_size]
+        if len(batch) < self.batch_size:
+            batch += self.datums[: self.batch_size - len(batch)]
+        return batch
+
+    def set_epoch(self, seed: int = 0):
+        rng = random.Random(seed)
+        rng.shuffle(self.datums)
+
+
+@chz.chz
+class ArithmeticSFTDatasetBuilder(recipe.supervised.types.SupervisedDatasetBuilder):
+    conversations: list[list[dict[str, str]]]
+    model_name: str
+    renderer_name: str
+    batch_size: int = BATCH_SIZE
+    max_length: int = MAX_LENGTH
+
+    def __call__(self):
+        return (
+            ArithmeticSFTDataset(
+                self.conversations,
+                self.model_name,
+                self.renderer_name,
+                self.batch_size,
+                self.max_length,
+            ),
+            None,
+        )
+
+
+def _read_final_train_loss(log_path: Path) -> float | None:
+    metrics_path = log_path / "metrics.jsonl"
+    if not metrics_path.exists():
+        return None
+    final_loss = None
+    for line in metrics_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        value = payload.get("train_mean_nll")
+        if isinstance(value, int | float):
+            final_loss = float(value)
+    return final_loss
+
+
+async def run_config(
+    *,
+    conversations: list[list[dict[str, str]]],
+    renderer_name: str,
+    learning_rate: float,
+    rank: int,
+    run_id: str,
+) -> dict[str, Any]:
+    label = f"lr={learning_rate:.0e}, rank={rank}"
+    safe_lr = f"{learning_rate:.0e}".replace("-", "m")
+    log_path = LOG_ROOT / f"mint-sft-sweep-{run_id}-{safe_lr}-rank{rank}"
+
+    print(f"\n--- Training config: {label} ---")
+    print(f"Log path: {log_path}")
+
+    config = recipe.supervised.train.Config(
+        log_path=str(log_path),
+        model_name=MODEL,
+        renderer_name=renderer_name,
+        dataset_builder=ArithmeticSFTDatasetBuilder(
+            conversations=conversations,
+            model_name=MODEL,
+            renderer_name=renderer_name,
+            batch_size=BATCH_SIZE,
+            max_length=MAX_LENGTH,
+        ),
+        learning_rate=learning_rate,
+        lora_rank=rank,
+        max_steps=STEPS,
+        save_every=999,
+        eval_every=999,
+        infrequent_eval_every=999,
+        ttl_seconds=3600,
     )
+    await recipe.supervised.train.main(config=config)
+    final_loss = _read_final_train_loss(log_path)
+    print(f"Completed {label}: final_train_mean_nll={final_loss}")
+    return {
+        "learning_rate": learning_rate,
+        "rank": rank,
+        "steps": STEPS,
+        "log_path": str(log_path),
+        "final_train_mean_nll": final_loss,
+    }
 
 
-def _status_code_from_error(exc: Exception) -> int | None:
-    status_code = getattr(exc, "status_code", None)
-    if isinstance(status_code, int):
-        return status_code
-    response = getattr(exc, "response", None)
-    response_status = getattr(response, "status_code", None)
-    return response_status if isinstance(response_status, int) else None
+async def run_sweep() -> list[dict[str, Any]]:
+    learning_rates = _parse_float_list("MINT_SFT_LRS", [1e-5, 5e-5])
+    ranks = _parse_int_list("MINT_LORA_RANKS", [8, 16])
+    renderer_name = recipe.get_recommended_renderer_name(MODEL)
+    conversations = generate_sft_conversations(DATASET_SIZE)
+    run_id = str(int(time.time()))
+
+    print("\n=== SFT Hyperparameter Sweep ===")
+    print(f"Model:          {MODEL}")
+    print(f"Renderer:       {renderer_name}")
+    print(f"Steps/config:   {STEPS}")
+    print(f"Batch size:     {BATCH_SIZE}")
+    print(f"Dataset size:   {len(conversations)}")
+    print(f"Learning rates: {learning_rates}")
+    print(f"LoRA ranks:     {ranks}")
+    print(f"Grid size:      {len(learning_rates)} x {len(ranks)} = {len(learning_rates) * len(ranks)} configs")
+
+    results: list[dict[str, Any]] = []
+    for learning_rate in learning_rates:
+        for rank in ranks:
+            results.append(
+                await run_config(
+                    conversations=conversations,
+                    renderer_name=renderer_name,
+                    learning_rate=learning_rate,
+                    rank=rank,
+                    run_id=run_id,
+                )
+            )
+    return results
 
 
-def _supported_model_count(capabilities: object) -> int | None:
-    models = getattr(capabilities, "supported_models", None)
-    return len(models) if isinstance(models, list) else None
-
-
-def preflight_connection(service_client: mint.ServiceClient):
-    base_url = _configured_base_url()
-    try:
-        return service_client.get_server_capabilities()
-    except tinker.APITimeoutError as exc:
-        raise RuntimeError(
-            "Auth preflight timed out while contacting "
-            f"{base_url}. Check `MINT_BASE_URL` and retry."
-        ) from exc
-    except tinker.APIConnectionError as exc:
-        raise RuntimeError(
-            "Auth preflight could not reach "
-            f"{base_url}. Check `MINT_BASE_URL`, network access, and server status."
-        ) from exc
-    except tinker.APIStatusError as exc:
-        status_code = _status_code_from_error(exc)
-        if status_code in {401, 403}:
-            raise RuntimeError(
-                "Auth preflight was rejected by the MinT server "
-                f"(HTTP {status_code}). Check that `MINT_API_KEY` is valid for {base_url}."
-            ) from exc
-        raise RuntimeError(
-            "Auth preflight failed with an unexpected MinT server response "
-            f"(HTTP {status_code or 'unknown'}) from {base_url}."
-        ) from exc
-
-
-def generate_sft_examples(n: int = 50) -> list[dict]:
-    """Generate multiplication examples for SFT."""
-    return [
-        {"question": f"What is {random.randint(10, 99)} * {random.randint(10, 99)}?"}
-        for _ in range(n)
-    ]
-
-
-def process_sft_example(ex: dict, tokenizer) -> types.Datum:
-    """Convert example to training datum."""
-    a, b = map(int, re.findall(r"\d+", ex["question"]))
-    answer = str(a * b)
-    prompt = f"Question: {ex['question']}\nAnswer:"
-    completion = f" {answer}"
-
-    prompt_tokens = tokenizer.encode(prompt, add_special_tokens=True)
-    completion_tokens = tokenizer.encode(completion, add_special_tokens=False)
-    completion_tokens.append(tokenizer.eos_token_id)
-
-    all_tokens = prompt_tokens + completion_tokens
-    all_weights = [0] * len(prompt_tokens) + [1] * len(completion_tokens)
-
-    input_tokens = all_tokens[:-1]
-    target_tokens = all_tokens[1:]
-    weights = all_weights[1:]
-
-    return types.Datum(
-        model_input=types.ModelInput.from_ints(tokens=input_tokens),
-        loss_fn_inputs={"target_tokens": target_tokens, "weights": weights},
-    )
+def print_summary(results: list[dict[str, Any]]) -> None:
+    print("\n=== Grid Search Summary ===")
+    print(f"{'LR':<12} {'Rank':<8} {'Steps':<8} {'Final train NLL':<18} {'Log path'}")
+    print("-" * 90)
+    for result in results:
+        loss = result["final_train_mean_nll"]
+        loss_text = f"{loss:.4f}" if isinstance(loss, float) else "n/a"
+        print(
+            f"{result['learning_rate']:<12.0e} "
+            f"{result['rank']:<8} "
+            f"{result['steps']:<8} "
+            f"{loss_text:<18} "
+            f"{result['log_path']}"
+        )
 
 
 def main() -> int:
-    """Run hyperparameter sweep."""
     try:
-        _require_api_key()
-        base_url = _configured_base_url()
+        base_url = configured_base_url()
         print("Connecting to MinT server...")
         print(f"Endpoint: {base_url}")
 
-        service_client = mint.ServiceClient()
-        capabilities = preflight_connection(service_client)
-        print(f"Server supports {_supported_model_count(capabilities)} models")
+        _service_client, capabilities = make_service_client()
+        supported = supported_model_count(capabilities)
+        if supported is None:
+            print("Auth preflight: OK")
+        else:
+            print(f"Auth preflight: OK ({supported} supported models)")
 
-        # Grid parameters
-        learning_rates = [1e-5, 5e-5, 2e-4]
-        ranks = [8, 16, 32]
-
-        print(f"\n=== SFT Hyperparameter Sweep ===")
-        print(f"Model: {MODEL}")
-        print(f"Steps: {STEPS} per config")
-        print(f"Learning rates: {learning_rates}")
-        print(f"LoRA ranks: {ranks}")
-        print(f"Grid size: {len(learning_rates)} × {len(ranks)} = {len(learning_rates) * len(ranks)} configs\n")
-
-        # Generate dataset
-        print("Generating multiplication examples...")
-        examples = generate_sft_examples(n=50)
-        print(f"Generated {len(examples)} examples")
-
-        print("\n=== Grid Search Results ===")
-        print(f"{'LR':<12} {'Rank':<8} {'Steps':<8} {'Status':<20}")
-        print("-" * 48)
-
-        for lr in learning_rates:
-            for rank in ranks:
-                config_name = f"lr={lr:.0e}_rank={rank}"
-                print(f"{lr:<12.0e} {rank:<8} {STEPS:<8} Ready for training")
-
-        print(f"\nTotal configurations ready: {len(learning_rates) * len(ranks)}")
-        print("Each will run for 5 SFT steps against the MinT server.")
-        print("Final loss values will be compared to identify best hyperparameters.")
+        results = asyncio.run(run_sweep())
+        print_summary(results)
         return 0
-
     except RuntimeError as exc:
         print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"Unexpected error: {exc}", file=sys.stderr)
         return 1
 
 

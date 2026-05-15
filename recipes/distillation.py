@@ -1,185 +1,254 @@
 #!/usr/bin/env python3
 """MinT Recipe: Prompt Distillation
 
-Use a larger teacher model to generate training data for a smaller student model.
-Teacher (30B) generates responses on a prompt set, student (0.6B) is SFT-trained on those.
+Sample answers from a teacher model, convert those answers into supervised
+chat data, then SFT-train a smaller student model with recipe.supervised.
 
 Run:
-  python recipes/distillation.py
+  MINT_API_KEY=sk-xxx python recipes/distillation.py
 
-All training runs against a remote MinT server.
+Useful overrides:
+  MINT_TEACHER_MODEL=Qwen/Qwen3-30B-A3B-Instruct-2507 MINT_SFT_STEPS=1 python recipes/distillation.py
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import sys
+import time
 from pathlib import Path
+from typing import Any
+
+from _common import (  # noqa: E402
+    configured_base_url,
+    is_model_supported,
+    supported_model_count,
+    make_service_client,
+)
+
+import chz  # noqa: E402
+import mint.recipe as recipe  # noqa: E402
+from mint import types  # noqa: E402
+from mint.recipe import get_tokenizer  # noqa: E402
 
 
-def load_env_file(path: Path) -> None:
-    if not path.exists():
-        return
-    for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if stripped.startswith("export "):
-            stripped = stripped[len("export "):].lstrip()
-        if "=" not in stripped:
-            continue
-        key, value = stripped.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        if key and key not in os.environ:
-            os.environ[key] = value
-
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-load_env_file(REPO_ROOT / ".env")
-
-for base_dir in (REPO_ROOT.parent, REPO_ROOT):
-    for src_dir in ("mindlab-toolkit-alpha/src", "mindlab-toolkit/src"):
-        mint_src = base_dir / src_dir
-        if mint_src.exists() and str(mint_src) not in sys.path:
-            sys.path.insert(0, str(mint_src))
-            break
-    else:
-        continue
-    break
-
-import mint
-import tinker
-from mint import types
-
-
-STUDENT_MODEL = os.environ.get("MINT_BASE_MODEL", "Qwen/Qwen3-0.6B")
-TEACHER_MODEL = "Qwen/Qwen3-30B-A3B-Instruct-2507"
+STUDENT_MODEL = os.environ.get("MINT_STUDENT_MODEL") or os.environ.get(
+    "MINT_BASE_MODEL", "Qwen/Qwen3-0.6B"
+)
+REQUESTED_TEACHER_MODEL = os.environ.get(
+    "MINT_TEACHER_MODEL", "Qwen/Qwen3-30B-A3B-Instruct-2507"
+)
 RANK = int(os.environ.get("MINT_LORA_RANK", "16"))
-SFT_STEPS = int(os.environ.get("MINT_SFT_STEPS", "5"))
+SFT_STEPS = int(os.environ.get("MINT_SFT_STEPS", "2"))
+BATCH_SIZE = int(os.environ.get("MINT_DISTILL_BATCH", "4"))
+MAX_LENGTH = int(os.environ.get("MINT_DISTILL_MAX_LENGTH", "768"))
+MAX_TOKENS = int(os.environ.get("MINT_DISTILL_MAX_TOKENS", "64"))
+TEMPERATURE = float(os.environ.get("MINT_DISTILL_TEMPERATURE", "0.2"))
+PROMPT_LIMIT = int(os.environ.get("MINT_DISTILL_PROMPTS", "4"))
+LOG_ROOT = Path(os.environ.get("MINT_LOG_ROOT", "/tmp"))
 
 
-def _configured_base_url() -> str:
-    base_url = os.environ.get("MINT_BASE_URL") or os.environ.get("TINKER_BASE_URL")
-    if not base_url:
-        base_url = "https://mint.macaron.xin/"
-    return base_url
+PROMPTS = [
+    "Give one practical tip for keeping regular backups.",
+    "Explain TCP in one sentence.",
+    "Why can caching make an app faster?",
+    "Give one reason code reviews should be specific.",
+    "What is a simple way to check an API timeout?",
+]
 
 
-def _require_api_key() -> str:
-    api_key = (os.environ.get("MINT_API_KEY") or os.environ.get("TINKER_API_KEY") or "").strip()
-    if api_key:
-        return api_key
-    raise RuntimeError(
-        "MINT_API_KEY not found. Set `MINT_API_KEY=sk-your-api-key-here` in the shell "
-        f"or add it to `{REPO_ROOT / '.env'}` before running this script."
+class DistilledSFTDataset(recipe.supervised.types.SupervisedDataset):
+    """Supervised dataset built from teacher-generated responses."""
+
+    def __init__(
+        self,
+        examples: list[dict[str, str]],
+        model_name: str,
+        renderer_name: str,
+        batch_size: int,
+        max_length: int,
+    ):
+        tokenizer = get_tokenizer(model_name)
+        renderer = recipe.renderers.get_renderer(renderer_name, tokenizer)
+        self.datums = [
+            recipe.supervised.conversation_to_datum(
+                [
+                    {"role": "user", "content": item["prompt"]},
+                    {"role": "assistant", "content": item["teacher_response"]},
+                ],
+                renderer,
+                max_length=max_length,
+            )
+            for item in examples
+        ]
+        self.batch_size = batch_size
+
+    def __len__(self) -> int:
+        return max(1, (len(self.datums) + self.batch_size - 1) // self.batch_size)
+
+    def get_batch(self, index: int):
+        start = (index * self.batch_size) % len(self.datums)
+        batch = self.datums[start : start + self.batch_size]
+        if len(batch) < self.batch_size:
+            batch += self.datums[: self.batch_size - len(batch)]
+        return batch
+
+
+@chz.chz
+class DistilledSFTDatasetBuilder(recipe.supervised.types.SupervisedDatasetBuilder):
+    examples: list[dict[str, str]]
+    model_name: str
+    renderer_name: str
+    batch_size: int = BATCH_SIZE
+    max_length: int = MAX_LENGTH
+
+    def __call__(self):
+        return (
+            DistilledSFTDataset(
+                self.examples,
+                self.model_name,
+                self.renderer_name,
+                self.batch_size,
+                self.max_length,
+            ),
+            None,
+        )
+
+
+def _read_final_train_loss(log_path: Path) -> float | None:
+    metrics_path = log_path / "metrics.jsonl"
+    if not metrics_path.exists():
+        return None
+    final_loss = None
+    for line in metrics_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        value = payload.get("train_mean_nll")
+        if isinstance(value, int | float):
+            final_loss = float(value)
+    return final_loss
+
+
+def _select_teacher_model(capabilities: object) -> str:
+    support = is_model_supported(capabilities, REQUESTED_TEACHER_MODEL)
+    if support is not False:
+        return REQUESTED_TEACHER_MODEL
+
+    print(
+        "Warning: requested teacher model is not listed by this MinT server: "
+        f"{REQUESTED_TEACHER_MODEL}. Falling back to self-distillation with {STUDENT_MODEL}."
     )
+    return STUDENT_MODEL
 
 
-def _status_code_from_error(exc: Exception) -> int | None:
-    status_code = getattr(exc, "status_code", None)
-    if isinstance(status_code, int):
-        return status_code
-    response = getattr(exc, "response", None)
-    response_status = getattr(response, "status_code", None)
-    return response_status if isinstance(response_status, int) else None
+def _decode_sample_text(sequence: object, tokenizer: Any) -> str:
+    tokens = getattr(sequence, "tokens", [])
+    text = tokenizer.decode(tokens).strip()
+    return text or "I do not know yet."
 
 
-def _supported_model_count(capabilities: object) -> int | None:
-    models = getattr(capabilities, "supported_models", None)
-    return len(models) if isinstance(models, list) else None
+def sample_teacher_responses(service_client, teacher_model: str, prompts: list[str]) -> list[dict[str, str]]:
+    """Sample one teacher response per prompt using a real SamplingClient."""
+    print("\n=== Stage 1: Teacher Sampling ===")
+    print(f"Teacher model: {teacher_model}")
+    print(f"Prompts:       {len(prompts)}")
+
+    sampling_client = service_client.create_sampling_client(base_model=teacher_model)
+    tokenizer = sampling_client.get_tokenizer()
+    examples: list[dict[str, str]] = []
+
+    for index, prompt in enumerate(prompts, 1):
+        prompt_tokens = tokenizer.encode(prompt, add_special_tokens=True)
+        result = sampling_client.sample(
+            prompt=types.ModelInput.from_ints(tokens=prompt_tokens),
+            num_samples=1,
+            sampling_params=types.SamplingParams(
+                max_tokens=MAX_TOKENS,
+                temperature=TEMPERATURE,
+                stop=[tokenizer.eos_token_id],
+            ),
+        ).result()
+        response = _decode_sample_text(result.sequences[0], tokenizer)
+        examples.append({"prompt": prompt, "teacher_response": response})
+        print(f"[{index}/{len(prompts)}] prompt: {prompt}")
+        print(f"          teacher: {response[:160]}")
+
+    return examples
 
 
-def preflight_connection(service_client: mint.ServiceClient):
-    base_url = _configured_base_url()
-    try:
-        return service_client.get_server_capabilities()
-    except tinker.APITimeoutError as exc:
-        raise RuntimeError(
-            "Auth preflight timed out while contacting "
-            f"{base_url}. Check `MINT_BASE_URL` and retry."
-        ) from exc
-    except tinker.APIConnectionError as exc:
-        raise RuntimeError(
-            "Auth preflight could not reach "
-            f"{base_url}. Check `MINT_BASE_URL`, network access, and server status."
-        ) from exc
-    except tinker.APIStatusError as exc:
-        status_code = _status_code_from_error(exc)
-        if status_code in {401, 403}:
-            raise RuntimeError(
-                "Auth preflight was rejected by the MinT server "
-                f"(HTTP {status_code}). Check that `MINT_API_KEY` is valid for {base_url}."
-            ) from exc
-        raise RuntimeError(
-            "Auth preflight failed with an unexpected MinT server response "
-            f"(HTTP {status_code or 'unknown'}) from {base_url}."
-        ) from exc
+async def train_student(examples: list[dict[str, str]]) -> dict[str, Any]:
+    """Train the student model on teacher outputs with recipe.supervised."""
+    print("\n=== Stage 2: Student SFT ===")
+    renderer_name = recipe.get_recommended_renderer_name(STUDENT_MODEL)
+    log_path = LOG_ROOT / f"mint-distillation-{int(time.time())}"
+    print(f"Student model: {STUDENT_MODEL}")
+    print(f"Renderer:      {renderer_name}")
+    print(f"Examples:      {len(examples)}")
+    print(f"Steps:         {SFT_STEPS}")
+    print(f"Log path:      {log_path}")
 
-
-def build_prompts() -> list[str]:
-    """Build prompt set for distillation."""
-    return [
-        "What is 5+3?",
-        "What is 10*2?",
-        "What is 100/5?",
-        "Who was the first president?",
-        "What is the capital of France?",
-    ]
+    config = recipe.supervised.train.Config(
+        log_path=str(log_path),
+        model_name=STUDENT_MODEL,
+        renderer_name=renderer_name,
+        dataset_builder=DistilledSFTDatasetBuilder(
+            examples=examples,
+            model_name=STUDENT_MODEL,
+            renderer_name=renderer_name,
+            batch_size=BATCH_SIZE,
+            max_length=MAX_LENGTH,
+        ),
+        learning_rate=float(os.environ.get("MINT_DISTILL_LR", "1e-5")),
+        lora_rank=RANK,
+        max_steps=SFT_STEPS,
+        save_every=999,
+        eval_every=999,
+        infrequent_eval_every=999,
+        ttl_seconds=3600,
+    )
+    await recipe.supervised.train.main(config=config)
+    final_loss = _read_final_train_loss(log_path)
+    return {"log_path": str(log_path), "final_train_mean_nll": final_loss}
 
 
 def main() -> int:
-    """Run prompt distillation."""
     try:
-        _require_api_key()
-        base_url = _configured_base_url()
+        base_url = configured_base_url()
         print("Connecting to MinT server...")
         print(f"Endpoint: {base_url}")
 
-        service_client = mint.ServiceClient()
-        capabilities = preflight_connection(service_client)
-        print(f"Server supports {_supported_model_count(capabilities)} models")
+        service_client, capabilities = make_service_client()
+        supported = supported_model_count(capabilities)
+        if supported is None:
+            print("Auth preflight: OK")
+        else:
+            print(f"Auth preflight: OK ({supported} supported models)")
 
-        print(f"\n=== Prompt Distillation Setup ===")
-        print(f"Teacher model: {TEACHER_MODEL} (30B)")
-        print(f"Student model: {STUDENT_MODEL} (0.6B)")
-        print(f"LoRA Rank: {RANK}")
-        print(f"SFT Steps: {SFT_STEPS}")
+        teacher_model = _select_teacher_model(capabilities)
+        prompts = PROMPTS[:PROMPT_LIMIT]
+        examples = sample_teacher_responses(service_client, teacher_model, prompts)
+        result = asyncio.run(train_student(examples))
 
-        prompts = build_prompts()
-        print(f"Prompt set size: {len(prompts)}")
-        for i, prompt in enumerate(prompts):
-            print(f"  {i+1}. {prompt}")
-
-        print(f"\n=== Stage 1: Teacher Generation ===")
-        print(f"Create sampling client for {TEACHER_MODEL}")
-        print(f"For each of {len(prompts)} prompts:")
-        print(f"  teacher_response = await teacher_sampler.sample_async(prompt)")
-        print(f"  -> Collect ~100 (prompt, response) pairs")
-
-        print(f"\n=== Stage 2: Student SFT ===")
-        print(f"Create training client for {STUDENT_MODEL}")
-        print(f"Train on teacher-generated (prompt, response) pairs:")
-        print(f"""
-for step in range({SFT_STEPS}):
-    batch = sample_batch_from_generated_pairs()
-    loss = await training_client.forward_backward(
-        loss_fn="cross_entropy",
-        data=batch
-    )
-    await training_client.optim_step(loss)
-    print(f"Step {{step}}: loss={{loss.value:.4f}}")
-""")
-
-        print(f"\n=== Expected Outcomes ===")
-        print(f"- Teacher model generates high-quality responses in ~2-5 seconds per prompt")
-        print(f"- Student trained on {len(prompts)} examples learns basic patterns")
-        print(f"- Final loss should decrease from initial ~4.0 to ~1.5 after {SFT_STEPS} steps")
-
+        print("\n=== Distillation Summary ===")
+        print(f"Teacher model:          {teacher_model}")
+        print(f"Student model:          {STUDENT_MODEL}")
+        print(f"Teacher samples:        {len(examples)}")
+        print(f"Student SFT steps:      {SFT_STEPS}")
+        print(f"Final train mean NLL:   {result['final_train_mean_nll']}")
+        print(f"Log path:               {result['log_path']}")
         return 0
 
     except RuntimeError as exc:
         print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"Unexpected error: {exc}", file=sys.stderr)
         return 1
 
 

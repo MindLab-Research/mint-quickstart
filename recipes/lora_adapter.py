@@ -1,208 +1,163 @@
 #!/usr/bin/env python3
-"""MinT Recipe: LoRA Adapter Export
+"""MinT Recipe: LoRA Adapter Checkpoint
 
-Export trained LoRA weights to PEFT format for use with vLLM/SGLang.
-Demonstrates checkpoint saving and PEFT-compatible weight export.
+Train a small LoRA adapter, save it with real MinT checkpoint APIs, then create
+a SamplingClient from the saved weights and sample from it.
 
 Run:
-  python recipes/lora_adapter.py
-
-All training runs against a remote MinT server.
+  MINT_API_KEY=sk-xxx python recipes/lora_adapter.py
 """
 
 from __future__ import annotations
 
 import os
+import random
+import re
 import sys
-from pathlib import Path
+from typing import Any
 
+from _common import (  # noqa: E402
+    configured_base_url,
+    supported_model_count,
+    make_service_client,
+)
 
-def load_env_file(path: Path) -> None:
-    if not path.exists():
-        return
-    for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if stripped.startswith("export "):
-            stripped = stripped[len("export "):].lstrip()
-        if "=" not in stripped:
-            continue
-        key, value = stripped.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        if key and key not in os.environ:
-            os.environ[key] = value
-
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-load_env_file(REPO_ROOT / ".env")
-
-for base_dir in (REPO_ROOT.parent, REPO_ROOT):
-    for src_dir in ("mindlab-toolkit-alpha/src", "mindlab-toolkit/src"):
-        mint_src = base_dir / src_dir
-        if mint_src.exists() and str(mint_src) not in sys.path:
-            sys.path.insert(0, str(mint_src))
-            break
-    else:
-        continue
-    break
-
-import mint
-import tinker
-from mint import types
+from mint import types  # noqa: E402
 
 
 MODEL = os.environ.get("MINT_BASE_MODEL", "Qwen/Qwen3-0.6B")
 RANK = int(os.environ.get("MINT_LORA_RANK", "16"))
+SFT_STEPS = int(os.environ.get("MINT_LORA_SFT_STEPS", "1"))
+SFT_LR = float(os.environ.get("MINT_LORA_SFT_LR", "5e-5"))
+MAX_TOKENS = int(os.environ.get("MINT_LORA_SAMPLE_MAX_TOKENS", "32"))
+TEMPERATURE = float(os.environ.get("MINT_LORA_SAMPLE_TEMPERATURE", "0.0"))
+
+random.seed(42)
 
 
-def _configured_base_url() -> str:
-    base_url = os.environ.get("MINT_BASE_URL") or os.environ.get("TINKER_BASE_URL")
-    if not base_url:
-        base_url = "https://mint.macaron.xin/"
-    return base_url
+def generate_sft_examples(n: int = 8) -> list[dict[str, str]]:
+    examples = []
+    for _ in range(n):
+        a = random.randint(2, 12)
+        b = random.randint(2, 12)
+        examples.append({"question": f"What is {a} + {b}?", "answer": str(a + b)})
+    return examples
 
 
-def _require_api_key() -> str:
-    api_key = (os.environ.get("MINT_API_KEY") or os.environ.get("TINKER_API_KEY") or "").strip()
-    if api_key:
-        return api_key
-    raise RuntimeError(
-        "MINT_API_KEY not found. Set `MINT_API_KEY=sk-your-api-key-here` in the shell "
-        f"or add it to `{REPO_ROOT / '.env'}` before running this script."
+def process_sft_example(example: dict[str, str], tokenizer: Any) -> types.Datum:
+    prompt = f"Question: {example['question']}\nAnswer:"
+    completion = f" {example['answer']}"
+
+    prompt_tokens = tokenizer.encode(prompt, add_special_tokens=True)
+    completion_tokens = tokenizer.encode(completion, add_special_tokens=False)
+    completion_tokens.append(tokenizer.eos_token_id)
+
+    all_tokens = prompt_tokens + completion_tokens
+    input_tokens = all_tokens[:-1]
+    target_tokens = all_tokens[1:]
+    weights = [0.0] * (len(prompt_tokens) - 1) + [1.0] * len(completion_tokens)
+
+    return types.Datum(
+        model_input=types.ModelInput.from_ints(tokens=input_tokens),
+        loss_fn_inputs={"target_tokens": target_tokens, "weights": weights},
     )
 
 
-def _status_code_from_error(exc: Exception) -> int | None:
-    status_code = getattr(exc, "status_code", None)
-    if isinstance(status_code, int):
-        return status_code
-    response = getattr(exc, "response", None)
-    response_status = getattr(response, "status_code", None)
-    return response_status if isinstance(response_status, int) else None
+def compute_cross_entropy(fb_result: Any, datums: list[types.Datum]) -> float:
+    total_loss = 0.0
+    total_weight = 0.0
+    for index, output in enumerate(fb_result.loss_fn_outputs):
+        logprobs = output["logprobs"]
+        if hasattr(logprobs, "tolist"):
+            logprobs = logprobs.tolist()
+        weights = datums[index].loss_fn_inputs["weights"]
+        if hasattr(weights, "tolist"):
+            weights = weights.tolist()
+        for logprob, weight in zip(logprobs, weights):
+            total_loss += -float(logprob) * float(weight)
+            total_weight += float(weight)
+    return total_loss / max(total_weight, 1.0)
 
 
-def _supported_model_count(capabilities: object) -> int | None:
-    models = getattr(capabilities, "supported_models", None)
-    return len(models) if isinstance(models, list) else None
-
-
-def preflight_connection(service_client: mint.ServiceClient):
-    base_url = _configured_base_url()
-    try:
-        return service_client.get_server_capabilities()
-    except tinker.APITimeoutError as exc:
-        raise RuntimeError(
-            "Auth preflight timed out while contacting "
-            f"{base_url}. Check `MINT_BASE_URL` and retry."
-        ) from exc
-    except tinker.APIConnectionError as exc:
-        raise RuntimeError(
-            "Auth preflight could not reach "
-            f"{base_url}. Check `MINT_BASE_URL`, network access, and server status."
-        ) from exc
-    except tinker.APIStatusError as exc:
-        status_code = _status_code_from_error(exc)
-        if status_code in {401, 403}:
-            raise RuntimeError(
-                "Auth preflight was rejected by the MinT server "
-                f"(HTTP {status_code}). Check that `MINT_API_KEY` is valid for {base_url}."
-            ) from exc
-        raise RuntimeError(
-            "Auth preflight failed with an unexpected MinT server response "
-            f"(HTTP {status_code or 'unknown'}) from {base_url}."
-        ) from exc
+def _sample_text(sampling_client: Any, tokenizer: Any, prompt: str) -> str:
+    prompt_tokens = tokenizer.encode(prompt, add_special_tokens=True)
+    result = sampling_client.sample(
+        prompt=types.ModelInput.from_ints(tokens=prompt_tokens),
+        num_samples=1,
+        sampling_params=types.SamplingParams(
+            max_tokens=MAX_TOKENS,
+            temperature=TEMPERATURE,
+            stop=[tokenizer.eos_token_id],
+        ),
+    ).result()
+    return tokenizer.decode(result.sequences[0].tokens).strip()
 
 
 def main() -> int:
-    """Demonstrate LoRA adapter export."""
     try:
-        _require_api_key()
-        base_url = _configured_base_url()
         print("Connecting to MinT server...")
-        print(f"Endpoint: {base_url}")
+        print(f"Endpoint: {configured_base_url()}")
+        service_client, capabilities = make_service_client()
+        supported = supported_model_count(capabilities)
+        if supported is None:
+            print("Auth preflight: OK")
+        else:
+            print(f"Auth preflight: OK ({supported} supported models)")
 
-        service_client = mint.ServiceClient()
-        capabilities = preflight_connection(service_client)
-        print(f"Server supports {_supported_model_count(capabilities)} models")
+        print("\n=== LoRA Adapter Checkpoint ===")
+        print(f"Base model: {MODEL}")
+        print(f"LoRA rank:  {RANK}")
+        print(f"SFT steps:  {SFT_STEPS}")
 
-        print(f"\n=== LoRA Adapter Export ===")
-        print(f"Base Model: {MODEL}")
-        print(f"LoRA Rank: {RANK}")
+        training_client = service_client.create_lora_training_client(
+            base_model=MODEL,
+            rank=RANK,
+            train_mlp=True,
+            train_attn=True,
+            train_unembed=True,
+        )
+        tokenizer = training_client.get_tokenizer()
+        data = [process_sft_example(example, tokenizer) for example in generate_sft_examples()]
+        print(f"Training examples: {len(data)}")
 
-        print(f"\n=== Training Phase ===")
-        print(f"""
-# Train a LoRA adapter
-training_client = await service_client.create_lora_training_client_async(
-    base_model=MODEL, rank=RANK
-)
+        for step in range(1, SFT_STEPS + 1):
+            fb_result = training_client.forward_backward(data, loss_fn="cross_entropy").result()
+            loss = compute_cross_entropy(fb_result, data)
+            training_client.optim_step(types.AdamParams(learning_rate=SFT_LR)).result()
+            print(f"Step {step}: train_cross_entropy={loss:.6f}")
 
-for step in range(10):
-    batch = load_batch()
-    loss = await training_client.forward_backward(
-        loss_fn="cross_entropy",
-        data=batch
-    )
-    await training_client.optim_step(loss)
+        print("\nSaving training state with save_state()...")
+        state_checkpoint = training_client.save_state(name="lora-adapter-state").result()
+        print(f"State checkpoint: {state_checkpoint.path}")
 
-# Save weights and get checkpoint reference
-weights_path = await training_client.save_weights_and_get_sampling_client()
-""")
+        print("\nSaving sampler weights with save_weights_for_sampler()...")
+        sampler_checkpoint = training_client.save_weights_for_sampler(
+            name="lora-adapter-sampler"
+        ).result()
+        print(f"Sampler weights:  {sampler_checkpoint.path}")
 
-        print(f"\n=== Export to PEFT Format ===")
-        print(f"""
-# Export trained LoRA to PEFT-compatible format
-export_dir = "/tmp/mint-lora-export-run-123/"
+        print("\nCreating SamplingClient from saved weights...")
+        sampling_client = service_client.create_sampling_client(
+            model_path=sampler_checkpoint.path,
+            base_model=MODEL,
+        )
+        sample_prompt = "Question: What is 4 + 5?\nAnswer:"
+        response = _sample_text(sampling_client, tokenizer, sample_prompt)
+        print(f"Sample prompt:   {sample_prompt}")
+        print(f"Sample response: {response}")
 
-# MinT provides export utilities
-export_result = await service_client.export_lora_to_peft(
-    weights=weights_path,
-    output_dir=export_dir,
-    base_model=MODEL,
-    target_modules=["q_proj", "v_proj"],  # Which modules have LoRA
-)
-
-print(f"Exported to {{export_dir}}")
-print(f"Files: {{export_result.files}}")
-""")
-
-        print(f"\n=== Expected Output Files ===")
-        print(f"/tmp/mint-lora-export-run-123/")
-        print(f"  adapter_config.json        # PEFT configuration")
-        print(f"  adapter_model.bin          # LoRA weights (PyTorch format)")
-        print(f"  training_args.bin          # Training hyperparameters")
-        print(f"  README.md                  # Documentation")
-
-        print(f"\n=== Using in vLLM/SGLang ===")
-        print(f"""
-# With vLLM:
-from vllm import LLM
-
-llm = LLM(
-    model="{MODEL}",
-    enable_lora=True,
-    max_lora_rank={RANK}
-)
-
-# Load the exported LoRA
-outputs = llm.generate(
-    prompts=["What is 5+3?"],
-    lora_request=LoRARequest("math", "/tmp/mint-lora-export-run-123/")
-)
-print(outputs[0].outputs[0].text)
-# -> " 8"
-""")
-
-        print(f"\n=== Export Formats ===")
-        print(f"Default (PEFT):       adapter_config.json + adapter_model.bin")
-        print(f"Alternative (HF):     Hugging Face safe_tensors format")
-        print(f"Alternative (GGUF):   GGML quantized format for cpu inference")
-
+        print("\n=== LoRA Adapter Summary ===")
+        print("Trained adapter: yes")
+        print(f"State checkpoint: {state_checkpoint.path}")
+        print(f"Sampler checkpoint: {sampler_checkpoint.path}")
+        print("Sampling from saved weights: success")
         return 0
 
     except RuntimeError as exc:
         print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"Unexpected error: {exc}", file=sys.stderr)
         return 1
 
 

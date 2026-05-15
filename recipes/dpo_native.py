@@ -1,195 +1,253 @@
 #!/usr/bin/env python3
 """MinT Recipe: DPO with Custom Loss
 
-Direct Preference Optimization using forward_backward_custom with Bradley-Terry loss.
-Demonstrates preference learning: chosen > rejected with KL penalty term (dpo_beta).
+Train on preference pairs using TrainingClient.forward_backward_custom() and a
+Bradley-Terry pairwise preference loss. Datums are ordered chosen/rejected:
+even index = chosen, odd index = rejected.
 
 Run:
-  python recipes/dpo_native.py
-
-All training runs against a remote MinT server.
+  MINT_API_KEY=sk-xxx python recipes/dpo_native.py
 """
 
 from __future__ import annotations
 
+import math
 import os
 import sys
-from pathlib import Path
+from dataclasses import dataclass
+from typing import Any
 
+from _common import (  # noqa: E402
+    configured_base_url,
+    supported_model_count,
+    make_service_client,
+)
 
-def load_env_file(path: Path) -> None:
-    if not path.exists():
-        return
-    for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if stripped.startswith("export "):
-            stripped = stripped[len("export "):].lstrip()
-        if "=" not in stripped:
-            continue
-        key, value = stripped.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        if key and key not in os.environ:
-            os.environ[key] = value
-
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-load_env_file(REPO_ROOT / ".env")
-
-for base_dir in (REPO_ROOT.parent, REPO_ROOT):
-    for src_dir in ("mindlab-toolkit-alpha/src", "mindlab-toolkit/src"):
-        mint_src = base_dir / src_dir
-        if mint_src.exists() and str(mint_src) not in sys.path:
-            sys.path.insert(0, str(mint_src))
-            break
-    else:
-        continue
-    break
-
-import mint
-import tinker
-from mint import types
+import torch  # noqa: E402
+import torch.nn.functional as F  # noqa: E402
+from mint import types  # noqa: E402
 
 
 MODEL = os.environ.get("MINT_BASE_MODEL", "Qwen/Qwen3-0.6B")
 RANK = int(os.environ.get("MINT_LORA_RANK", "16"))
-DPO_STEPS = int(os.environ.get("MINT_DPO_STEPS", "5"))
-DPO_BETA = float(os.environ.get("MINT_DPO_BETA", "0.1"))
+DPO_STEPS = int(os.environ.get("MINT_DPO_STEPS", "3"))
 DPO_LR = float(os.environ.get("MINT_DPO_LR", "1e-5"))
 
 
-def _configured_base_url() -> str:
-    base_url = os.environ.get("MINT_BASE_URL") or os.environ.get("TINKER_BASE_URL")
-    if not base_url:
-        base_url = "https://mint.macaron.xin/"
-    return base_url
+@dataclass(frozen=True)
+class PreferencePair:
+    prompt: str
+    chosen: str
+    rejected: str
 
 
-def _require_api_key() -> str:
-    api_key = (os.environ.get("MINT_API_KEY") or os.environ.get("TINKER_API_KEY") or "").strip()
-    if api_key:
-        return api_key
-    raise RuntimeError(
-        "MINT_API_KEY not found. Set `MINT_API_KEY=sk-your-api-key-here` in the shell "
-        f"or add it to `{REPO_ROOT / '.env'}` before running this script."
+PREFERENCE_PAIRS = [
+    PreferencePair(
+        prompt="Explain why regular backups matter.",
+        chosen="Backups protect data by creating copies that can be restored after mistakes, hardware failures, or ransomware.",
+        rejected="Backups are good.",
+    ),
+    PreferencePair(
+        prompt="What is TCP?",
+        chosen="TCP is a reliable transport protocol that provides ordered delivery of data between applications.",
+        rejected="TCP is a network thing.",
+    ),
+    PreferencePair(
+        prompt="Why use caching?",
+        chosen="Caching stores frequently accessed data in faster storage so later requests can avoid repeated expensive work.",
+        rejected="Caching makes things faster.",
+    ),
+    PreferencePair(
+        prompt="What should a code review comment optimize for?",
+        chosen="A code review comment should be specific, actionable, and tied to a real correctness or maintainability risk.",
+        rejected="It should say the code is bad.",
+    ),
+]
+
+
+def _coerce_chat_template_tokens(tokenized: Any) -> list[int]:
+    if isinstance(tokenized, dict):
+        tokenized = tokenized["input_ids"]
+    elif hasattr(tokenized, "input_ids"):
+        tokenized = getattr(tokenized, "input_ids")
+    if hasattr(tokenized, "tolist"):
+        tokenized = tokenized.tolist()
+    if isinstance(tokenized, tuple):
+        tokenized = list(tokenized)
+    if tokenized and isinstance(tokenized[0], list):
+        tokenized = tokenized[0]
+    return [int(token) for token in tokenized]
+
+
+def build_prompt_tokens(prompt: str, tokenizer: Any) -> list[int]:
+    messages = [{"role": "user", "content": prompt}]
+    if hasattr(tokenizer, "apply_chat_template"):
+        return _coerce_chat_template_tokens(
+            tokenizer.apply_chat_template(
+                messages,
+                tokenize=True,
+                add_generation_prompt=True,
+            )
+        )
+    return tokenizer.encode(f"User: {prompt}\nAssistant:", add_special_tokens=True)
+
+
+def build_datum(prompt_tokens: list[int], completion_text: str, tokenizer: Any) -> types.Datum:
+    """Build a Datum with prompt tokens masked out and completion tokens trained."""
+    completion_tokens = tokenizer.encode(f" {completion_text}", add_special_tokens=False)
+    completion_tokens.append(tokenizer.eos_token_id)
+
+    all_tokens = prompt_tokens + completion_tokens
+    input_tokens = all_tokens[:-1]
+    target_tokens = all_tokens[1:]
+    weights = [0.0] * (len(prompt_tokens) - 1) + [1.0] * len(completion_tokens)
+
+    return types.Datum(
+        model_input=types.ModelInput.from_ints(tokens=input_tokens),
+        loss_fn_inputs={"target_tokens": target_tokens, "weights": weights},
     )
 
 
-def _status_code_from_error(exc: Exception) -> int | None:
-    status_code = getattr(exc, "status_code", None)
-    if isinstance(status_code, int):
-        return status_code
-    response = getattr(exc, "response", None)
-    response_status = getattr(response, "status_code", None)
-    return response_status if isinstance(response_status, int) else None
+def flatten_preference_pairs(pairs: list[PreferencePair], tokenizer: Any) -> list[types.Datum]:
+    data: list[types.Datum] = []
+    for pair in pairs:
+        prompt_tokens = build_prompt_tokens(pair.prompt, tokenizer)
+        data.append(build_datum(prompt_tokens, pair.chosen, tokenizer))
+        data.append(build_datum(prompt_tokens, pair.rejected, tokenizer))
+    return data
 
 
-def _supported_model_count(capabilities: object) -> int | None:
-    models = getattr(capabilities, "supported_models", None)
-    return len(models) if isinstance(models, list) else None
+def _to_float_tensor(value: Any) -> torch.Tensor:
+    if hasattr(value, "to_torch"):
+        tensor = value.to_torch()
+    elif hasattr(value, "tolist"):
+        tensor = torch.tensor(value.tolist(), dtype=torch.float32)
+    else:
+        tensor = torch.tensor(value, dtype=torch.float32)
+    return tensor.flatten().float()
 
 
-def preflight_connection(service_client: mint.ServiceClient):
-    base_url = _configured_base_url()
-    try:
-        return service_client.get_server_capabilities()
-    except tinker.APITimeoutError as exc:
-        raise RuntimeError(
-            "Auth preflight timed out while contacting "
-            f"{base_url}. Check `MINT_BASE_URL` and retry."
-        ) from exc
-    except tinker.APIConnectionError as exc:
-        raise RuntimeError(
-            "Auth preflight could not reach "
-            f"{base_url}. Check `MINT_BASE_URL`, network access, and server status."
-        ) from exc
-    except tinker.APIStatusError as exc:
-        status_code = _status_code_from_error(exc)
-        if status_code in {401, 403}:
-            raise RuntimeError(
-                "Auth preflight was rejected by the MinT server "
-                f"(HTTP {status_code}). Check that `MINT_API_KEY` is valid for {base_url}."
-            ) from exc
-        raise RuntimeError(
-            "Auth preflight failed with an unexpected MinT server response "
-            f"(HTTP {status_code or 'unknown'}) from {base_url}."
-        ) from exc
+def sequence_logprob(logprobs: Any, weights: Any) -> torch.Tensor:
+    """Weighted sequence logprob while preserving gradients on logprobs."""
+    if isinstance(logprobs, torch.Tensor):
+        logprob_tensor = logprobs.flatten().float()
+    elif hasattr(logprobs, "to_torch"):
+        logprob_tensor = logprobs.to_torch().flatten().float()
+    else:
+        logprob_tensor = torch.as_tensor(logprobs, dtype=torch.float32).flatten()
+
+    weight_tensor = _to_float_tensor(weights)
+    if logprob_tensor.shape != weight_tensor.shape:
+        raise ValueError(
+            "logprobs and weights must have the same shape, "
+            f"got {tuple(logprob_tensor.shape)} and {tuple(weight_tensor.shape)}"
+        )
+    return torch.dot(logprob_tensor, weight_tensor)
 
 
-def build_preference_pairs() -> list[dict]:
-    """Build preference pairs for DPO training.
+def pairwise_preference_loss(data: list[types.Datum], logprobs_list: list[Any]):
+    """Bradley-Terry loss over chosen/rejected datum pairs."""
+    if len(data) % 2 != 0:
+        raise ValueError(
+            "pairwise_preference_loss expects an even number of datums ordered as "
+            "(chosen, rejected) pairs."
+        )
 
-    Returns list of dicts with 'prompt', 'chosen', 'rejected' fields.
-    """
-    return [
-        {
-            "prompt": "What is 5+3?",
-            "chosen": " 8",
-            "rejected": " 10",
-        },
-        {
-            "prompt": "What is 10*2?",
-            "chosen": " 20",
-            "rejected": " 5",
-        },
-        {
-            "prompt": "What is 100/5?",
-            "chosen": " 20",
-            "rejected": " 15",
-        },
-    ]
+    chosen_scores: list[torch.Tensor] = []
+    rejected_scores: list[torch.Tensor] = []
+    for chosen_datum, rejected_datum, chosen_logprobs, rejected_logprobs in zip(
+        data[::2], data[1::2], logprobs_list[::2], logprobs_list[1::2]
+    ):
+        chosen_scores.append(
+            sequence_logprob(chosen_logprobs, chosen_datum.loss_fn_inputs["weights"])
+        )
+        rejected_scores.append(
+            sequence_logprob(rejected_logprobs, rejected_datum.loss_fn_inputs["weights"])
+        )
+
+    chosen_tensor = torch.stack(chosen_scores)
+    rejected_tensor = torch.stack(rejected_scores)
+    margins = chosen_tensor - rejected_tensor
+    loss = -F.logsigmoid(margins).mean()
+    metrics = {
+        "loss": float(loss.detach().cpu()),
+        "pair_accuracy": float((margins > 0).float().mean().detach().cpu()),
+        "mean_margin": float(margins.mean().detach().cpu()),
+        "mean_chosen_score": float(chosen_tensor.mean().detach().cpu()),
+        "mean_rejected_score": float(rejected_tensor.mean().detach().cpu()),
+    }
+    return loss, metrics
 
 
 def main() -> int:
-    """Run DPO training."""
     try:
-        _require_api_key()
-        base_url = _configured_base_url()
         print("Connecting to MinT server...")
-        print(f"Endpoint: {base_url}")
+        print(f"Endpoint: {configured_base_url()}")
+        service_client, capabilities = make_service_client()
+        supported = supported_model_count(capabilities)
+        if supported is None:
+            print("Auth preflight: OK")
+        else:
+            print(f"Auth preflight: OK ({supported} supported models)")
 
-        service_client = mint.ServiceClient()
-        capabilities = preflight_connection(service_client)
-        print(f"Server supports {_supported_model_count(capabilities)} models")
+        print("\n=== DPO Training Setup ===")
+        print(f"Model:       {MODEL}")
+        print(f"LoRA Rank:   {RANK}")
+        print(f"DPO Steps:   {DPO_STEPS}")
+        print(f"Learning LR: {DPO_LR}")
+        print(f"Pairs:       {len(PREFERENCE_PAIRS)}")
 
-        print(f"\n=== DPO Training Setup ===")
-        print(f"Model: {MODEL}")
-        print(f"LoRA Rank: {RANK}")
-        print(f"DPO Steps: {DPO_STEPS}")
-        print(f"DPO Beta: {DPO_BETA} (KL penalty strength)")
-        print(f"Learning Rate: {DPO_LR}")
+        training_client = service_client.create_lora_training_client(
+            base_model=MODEL,
+            rank=RANK,
+            train_mlp=True,
+            train_attn=True,
+            train_unembed=True,
+        )
+        tokenizer = training_client.get_tokenizer()
+        data = flatten_preference_pairs(PREFERENCE_PAIRS, tokenizer)
+        print(f"Datums:      {len(data)} ({len(data) // 2} pairs; even=chosen, odd=rejected)")
 
-        # Build preference data
-        pairs = build_preference_pairs()
-        print(f"\nPreference pairs: {len(pairs)}")
-        for i, pair in enumerate(pairs):
-            print(f"  {i+1}. Prompt: '{pair['prompt']}'")
-            print(f"     Chosen:   '{pair['chosen']}'")
-            print(f"     Rejected: '{pair['rejected']}'")
+        last_metrics: dict[str, float] = {}
+        for step in range(1, DPO_STEPS + 1):
+            result = training_client.forward_backward_custom(
+                data,
+                pairwise_preference_loss,
+            ).result()
+            metrics = result.metrics or {}
+            training_client.optim_step(types.AdamParams(learning_rate=DPO_LR)).result()
+            loss = float(metrics.get("loss", float("nan")))
+            pair_accuracy = float(metrics.get("pair_accuracy", float("nan")))
+            mean_margin = float(metrics.get("mean_margin", float("nan")))
+            print(
+                f"Step {step}: loss={loss:.6f}, "
+                f"pair_accuracy={pair_accuracy:.2f}, mean_margin={mean_margin:.6f}"
+            )
+            last_metrics = {
+                "loss": loss,
+                "pair_accuracy": pair_accuracy,
+                "mean_margin": mean_margin,
+            }
 
-        print(f"\n=== DPO Loss Computation ===")
-        print("For each (prompt, chosen, rejected) triple:")
-        print("  1. Compute forward pass for chosen response")
-        print("     -> chosen_logprob = log p_policy(chosen | prompt)")
-        print("  2. Compute forward pass for rejected response")
-        print("     -> rejected_logprob = log p_policy(rejected | prompt)")
-        print("  3. Compute forward pass with reference model to get KL penalty")
-        print("     -> ref_chosen_logprob = log p_ref(chosen | prompt)")
-        print("     -> ref_rejected_logprob = log p_ref(rejected | prompt)")
-        print("  4. DPO loss:")
-        print(f"     L = -log sigmoid({DPO_BETA} * (chosen_logprob - rejected_logprob")
-        print(f"                            - (ref_chosen_logprob - ref_rejected_logprob)))")
-        print("     Higher margin -> lower loss")
+        if not math.isfinite(last_metrics.get("loss", float("nan"))):
+            raise RuntimeError(f"DPO loss was not finite: {last_metrics}")
+        pair_accuracy = last_metrics.get("pair_accuracy", float("nan"))
+        if not 0.0 <= pair_accuracy <= 1.0:
+            raise RuntimeError(f"pair_accuracy out of range: {last_metrics}")
 
-        print(f"\nWill run {DPO_STEPS} DPO steps, tracking chosen_logprob - rejected_logprob")
-        print("convergence = margin should increase over steps (policy learns to prefer chosen)")
-
+        final_checkpoint = training_client.save_weights_for_sampler(name="dpo-native-final").result()
+        print("\n=== DPO Summary ===")
+        print(f"Final loss:          {last_metrics['loss']:.6f}")
+        print(f"Final pair_accuracy: {last_metrics['pair_accuracy']:.2f}")
+        print(f"Final mean_margin:   {last_metrics['mean_margin']:.6f}")
+        print(f"Sampler checkpoint:  {final_checkpoint.path}")
         return 0
 
     except RuntimeError as exc:
         print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"Unexpected error: {exc}", file=sys.stderr)
         return 1
 
 
