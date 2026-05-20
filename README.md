@@ -1,8 +1,14 @@
+<p align="center">
+  <img src="docs/assets/mint-icon.png" alt="MinT" width="120" height="120">
+</p>
+
 # MinT Quickstart
 
 [English](./README.md) | [中文](./README_zh.md)
 
 The single entry repo for learning [MinT](https://github.com/MindLab-Research/mindlab-toolkit) (Mind Lab Toolkit) — from first API call to advanced RL training.
+
+Visit the [MinT website](https://macaron.im/mindlab/mint).
 
 > **Important:** All experiments run against an already deployed MinT server. This repo does **not** start MinT backend services locally. You only need valid server endpoint + API key credentials.
 

@@ -1,8 +1,14 @@
+<p align="center">
+  <img src="docs/assets/mint-icon.png" alt="MinT" width="120" height="120">
+</p>
+
 # MinT 快速入门
 
 [English](./README.md) | [中文](./README_zh.md)
 
 学习 [MinT](https://github.com/MindLab-Research/mindlab-toolkit)（Mind Lab Toolkit）的唯一入口仓库 — 从第一次 API 调用到高级 RL 训练。
+
+访问 [MinT 官网](https://macaron.im/mindlab/mint)。
 
 > **注意：** 所有实验均基于已部署的 MinT 服务器运行。本仓库**不会**在本地启动 MinT 后端服务。你只需要有效的服务器地址和 API Key。
 
