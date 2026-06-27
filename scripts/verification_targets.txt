@@ -3,6 +3,7 @@ quickstart/quickstart.py
 quickstart/custom_loss.py
 quickstart/custom_reward.py
 quickstart/sampling_log.py
+quickstart/openai_compat.py
 demos/rl/adapters/verifiable_math.py
 demos/rl/adapters/preference_chat.py
 demos/rl/adapters/environment_tooluse.py

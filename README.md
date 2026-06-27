@@ -23,6 +23,7 @@ Visit the [MinT website](https://macaron.im/mindlab/mint).
 | 3 | **RL-3 Environment Tool Use** | RL | Code execution feedback | [`demos/rl/adapters/environment_tooluse.py`](demos/rl/adapters/environment_tooluse.py) |
 | 4 | **Sampling Log** | Sampling | Train then inspect model responses | [`quickstart/sampling_log.py`](quickstart/sampling_log.py) |
 | 5 | **Embodied-1 OpenPI FAST SDK** | Embodied | MinT-only `mintx` OpenPI client over 3 camera images + state + action-token supervision | [`demos/embodied/openpi_vla_sdk.py`](demos/embodied/openpi_vla_sdk.py) |
+| 6 | **OpenAI-Compatible Inference** | Inference | Call a deployed model with the official OpenAI SDK (no `mint` import) | [`quickstart/openai_compat.py`](quickstart/openai_compat.py) |
 
 ### Reference
 
@@ -53,6 +54,29 @@ MINT_API_KEY=sk-your-api-key-here
 Use the MinT endpoint that matches your region:
 - Mainland China: `https://mint-cn.macaron.xin/`
 - Outside Mainland China: `https://mint.macaron.xin/`
+
+## OpenAI-Compatible Inference
+
+If you only want to run inference against an already-deployed model, you do not
+need the `mint` SDK at all. MinT serves an OpenAI-compatible endpoint at
+`/oai/api/v1`, so the official `openai` SDK works by overriding `base_url`:
+
+```bash
+pip install openai
+
+MINT_BASE_URL=https://mint.macaron.xin \
+MINT_API_KEY=sk-your-api-key-here \
+python quickstart/openai_compat.py chat \
+  --model Qwen/Qwen3-30B-A3B-Instruct-2507 \
+  --user-message "Reply with exactly: pong"
+```
+
+Subcommands: `completions`, `chat`, `tool`, `smoke`. Supported surface includes
+`models.list/retrieve`, completions, chat, tool-call roundtrips, and
+`AsyncOpenAI`. Not yet supported: `stream=True`, `n > 1`, `responses.create`,
+`embeddings.create`. See the
+[OpenAI-Compatible API docs](https://macaron.im/mindlab/mint) for the full
+guide.
 
 ## Common First Questions
 

@@ -23,6 +23,7 @@
 | 3 | **RL-3 环境工具调用** | RL | 代码执行反馈 | [`demos/rl/adapters/environment_tooluse.py`](demos/rl/adapters/environment_tooluse.py) |
 | 4 | **采样日志** | 采样 | 训练后查看模型回答 | [`quickstart/sampling_log.py`](quickstart/sampling_log.py) |
 | 5 | **Embodied-1 OpenPI FAST SDK** | Embodied | 通过 MinT-only `mintx` OpenPI client 处理三路相机 + state + action token 监督 | [`demos/embodied/openpi_vla_sdk.py`](demos/embodied/openpi_vla_sdk.py) |
+| 6 | **OpenAI 兼容推理** | Inference | 用官方 OpenAI SDK 调用已部署模型（无需 import `mint`） | [`quickstart/openai_compat.py`](quickstart/openai_compat.py) |
 
 ### 参考示例
 
@@ -53,6 +54,27 @@ MINT_API_KEY=sk-your-api-key-here
 按所在区域选择 MinT 域名：
 - 境内：`https://mint-cn.macaron.xin/`
 - 境外：`https://mint.macaron.xin/`
+
+## OpenAI 兼容推理
+
+如果你只想对已经部署好的模型做推理，完全不需要 `mint` SDK。MinT 在
+`/oai/api/v1` 上提供了 OpenAI 兼容接口，官方 `openai` SDK 只要覆盖 `base_url`
+就能用：
+
+```bash
+pip install openai
+
+MINT_BASE_URL=https://mint.macaron.xin \
+MINT_API_KEY=sk-your-api-key-here \
+python quickstart/openai_compat.py chat \
+  --model Qwen/Qwen3-30B-A3B-Instruct-2507 \
+  --user-message "Reply with exactly: pong"
+```
+
+子命令：`completions`、`chat`、`tool`、`smoke`。已支持 `models.list/retrieve`、
+completions、chat、工具调用 roundtrip 以及 `AsyncOpenAI`。暂不支持：
+`stream=True`、`n > 1`、`responses.create`、`embeddings.create`。完整说明见
+[OpenAI 兼容 API 文档](https://macaron.im/mindlab/mint)。
 
 ## 常见起步问题
 
