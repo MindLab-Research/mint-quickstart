@@ -245,3 +245,4 @@ If you must keep the exact `import tinker` statement, import `mint` earlier in t
 - [Pi Skills](.pi/skills/README.md) — project-local pi skills for API, debugging, and issue reporting
 - [Migration Skill](mint-skill/SKILL.md) — AI agent skill for migrating from verl/TRL/OpenRLHF
 - [中文 README](README_zh.md) — Chinese version of this document
+# concurrent scheduling probe
